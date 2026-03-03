@@ -1,0 +1,131 @@
+import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Property, PropertyFilter } from '@/types/property';
+import { properties as mockProperties } from '@/mocks/properties';
+import { calculateDistance } from '@/utils/distance';
+
+interface PropertyState {
+  properties: Property[];
+  favorites: string[];
+  filter: PropertyFilter;
+  
+  // Actions
+  toggleFavorite: (id: string) => void;
+  setFilter: (filter: PropertyFilter) => void;
+  clearFilter: () => void;
+  getFilteredProperties: () => Property[];
+  getFeaturedProperties: () => Property[];
+  getPropertiesNearby: (latitude: number, longitude: number, maxDistance: number) => Property[];
+  addProperty: (property: Omit<Property, 'id'>) => void;
+}
+
+export const usePropertyStore = create<PropertyState>()(
+  persist(
+    (set, get) => ({
+      properties: mockProperties,
+      favorites: [],
+      filter: {},
+      
+      toggleFavorite: (id: string) => set((state) => {
+        if (state.favorites.includes(id)) {
+          return { favorites: state.favorites.filter(favId => favId !== id) };
+        } else {
+          return { favorites: [...state.favorites, id] };
+        }
+      }),
+      
+      setFilter: (filter: PropertyFilter) => set({ filter }),
+      
+      clearFilter: () => set({ filter: {} }),
+      
+      getFilteredProperties: () => {
+        const { properties, filter } = get();
+        
+        return properties.filter(property => {
+          // Filter by price range
+          if (filter.minPrice && property.price < filter.minPrice) return false;
+          if (filter.maxPrice && property.price > filter.maxPrice) return false;
+          
+          // Filter by bedrooms
+          if (filter.bedrooms && property.bedrooms < filter.bedrooms) return false;
+          
+          // Filter by bathrooms
+          if (filter.bathrooms && property.bathrooms < filter.bathrooms) return false;
+          
+          // Filter by property type
+          if (filter.propertyType && filter.propertyType.length > 0 && 
+              !filter.propertyType.includes(property.type)) return false;
+          
+          // Filter by listing type
+          if (filter.listingType && filter.listingType.length > 0 && 
+              !filter.listingType.includes(property.listingType)) return false;
+          
+          // Filter by payment frequency
+          if (filter.paymentFrequency && property.paymentFrequency) {
+            const matchesFrequency = 
+              (property.listingType === 'rent' && property.paymentFrequency.rent === filter.paymentFrequency) ||
+              (property.listingType === 'short-let' && property.paymentFrequency["short-let"] === filter.paymentFrequency);
+            
+            if (!matchesFrequency) return false;
+          }
+          
+          // Filter by state
+          if (filter.state && property.state !== filter.state) return false;
+          
+          // Filter by city
+          if (filter.city && property.city !== filter.city) return false;
+          
+          // Filter by search query (title, address, city, state)
+          if (filter.searchQuery) {
+            const query = filter.searchQuery.toLowerCase();
+            const matchesQuery = 
+              property.title.toLowerCase().includes(query) ||
+              property.address.toLowerCase().includes(query) ||
+              property.city.toLowerCase().includes(query) ||
+              property.state.toLowerCase().includes(query);
+            
+            if (!matchesQuery) return false;
+          }
+          
+          return true;
+        });
+      },
+      
+      getFeaturedProperties: () => {
+        return get().properties.filter(property => property.isFeatured);
+      },
+      
+      getPropertiesNearby: (latitude: number, longitude: number, maxDistance: number = 20) => {
+        const { properties } = get();
+        
+        return properties.filter(property => {
+          const distance = calculateDistance(
+            latitude,
+            longitude,
+            property.latitude,
+            property.longitude
+          );
+          
+          // Return properties within the specified distance (default 20km)
+          return distance <= maxDistance;
+        });
+      },
+      
+      addProperty: (property) => set((state) => {
+        // Generate a unique ID
+        const id = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const newProperty = { ...property, id };
+        
+        return {
+          properties: [...state.properties, newProperty]
+        };
+      })
+    }),
+    {
+      name: 'property-storage',
+      storage: createJSONStorage(() => AsyncStorage),
+      partialize: (state) => ({ favorites: state.favorites, properties: state.properties }),
+    }
+  )
+);
