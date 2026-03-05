@@ -7,35 +7,27 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { trpc, trpcClient } from "@/lib/trpc";
 
 export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
   initialRouteName: "(tabs)",
 };
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
+// Keep splash screen visible while loading fonts
 SplashScreen.preventAutoHideAsync();
 
-// Create a client
+// React Query client
 const queryClient = new QueryClient();
 
 export default function RootLayout() {
-  const [loaded, error] = useFonts({
+  const [fontsLoaded] = useFonts({
     ...FontAwesome.font,
   });
 
   useEffect(() => {
-    if (error) {
-      console.error(error);
-      throw error;
-    }
-  }, [error]);
-
-  useEffect(() => {
-    if (loaded) {
+    if (fontsLoaded) {
       SplashScreen.hideAsync();
     }
-  }, [loaded]);
+  }, [fontsLoaded]);
 
-  if (!loaded) {
+  if (!fontsLoaded) {
     return null;
   }
 
@@ -64,3 +56,84 @@ function RootLayoutNav() {
     </Stack>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// import FontAwesome from "@expo/vector-icons/FontAwesome";
+// import { useFonts } from "expo-font";
+// import { Stack } from "expo-router";
+// import * as SplashScreen from "expo-splash-screen";
+// import { useEffect } from "react";
+// import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+// import { trpc, trpcClient } from "@/lib/trpc";
+
+
+// export const unstable_settings = {
+//   // Ensure that reloading on `/modal` keeps a back button present.
+//   initialRouteName: "(tabs)",
+// };
+
+// // Prevent the splash screen from auto-hiding before asset loading is complete.
+// SplashScreen.preventAutoHideAsync();
+
+// // Create a client
+// const queryClient = new QueryClient();
+
+// export default function RootLayout() {
+//   const [loaded, error] = useFonts({
+//     ...FontAwesome.font,
+//   });
+
+//   useEffect(() => {
+//     if (error) {
+//       console.error(error);
+//       throw error;
+//     }
+//   }, [error]);
+
+//   useEffect(() => {
+//     if (loaded) {
+//       SplashScreen.hideAsync();
+//     }
+//   }, [loaded]);
+
+//   if (!loaded) {
+//     return null;
+//   }
+
+//   return (
+//     <trpc.Provider client={trpcClient} queryClient={queryClient}>
+//       <QueryClientProvider client={queryClient}>
+//         <RootLayoutNav />
+//       </QueryClientProvider>
+//     </trpc.Provider>
+//   );
+// }
+
+// function RootLayoutNav() {
+//   return (
+//     <Stack
+//       screenOptions={{
+//         headerBackTitle: "Back",
+//       }}
+//     >
+//       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+//       <Stack.Screen name="modal" options={{ presentation: "modal" }} />
+//       <Stack.Screen name="login" options={{ title: "Sign In" }} />
+//       <Stack.Screen name="signup" options={{ title: "Sign Up" }} />
+//       <Stack.Screen name="add-property" options={{ title: "Add Property" }} />
+//       <Stack.Screen name="property/[id]" options={{ title: "Property" }} />
+//     </Stack>
+//   );
+// }
