@@ -1,27 +1,26 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  StyleSheet, 
-  View, 
-  Text, 
-  ScrollView, 
-  TextInput, 
-  Pressable, 
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  ScrollView,
+  TextInput,
+  Pressable,
   Alert,
-  Platform
+  Platform,
 } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import { 
-  Plus, 
-  Camera, 
-  X,
-  Check
-} from 'lucide-react-native';
+import MapView, { MapPressEvent, Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import { Camera, Check, X } from 'lucide-react-native';
 import { usePropertyStore } from '@/hooks/usePropertyStore';
+import { useAuthStore } from '@/hooks/useAuthStore';
 import Colors from '@/constants/colors';
 import StateSelector from '@/components/StateSelector';
 import CitySelector from '@/components/CitySelector';
+import { getNearbyFacilityDistances } from '@/utils/facilities';
+import { LandUnit, ListingStatus, Property } from '@/types/property';
 
 const propertyTypes = [
   { label: 'House', value: 'house' },
@@ -40,6 +39,18 @@ const listingTypes = [
   { label: 'Short-Let', value: 'short-let' },
 ];
 
+const listingStatuses: { label: string; value: ListingStatus }[] = [
+  { label: 'Available', value: 'available' },
+  { label: 'Reserved', value: 'reserved' },
+  { label: 'Sold', value: 'sold' },
+];
+
+const landUnits: { label: string; value: LandUnit }[] = [
+  { label: 'Plot', value: 'plot' },
+  { label: 'Acre', value: 'acre' },
+  { label: 'Hectare', value: 'hectare' },
+];
+
 const paymentFrequencies = {
   rent: [
     { label: 'Monthly', value: 'monthly' },
@@ -49,20 +60,46 @@ const paymentFrequencies = {
     { label: 'Daily', value: 'daily' },
     { label: 'Weekly', value: 'weekly' },
     { label: 'Monthly', value: 'monthly' },
-  ]
+  ],
 };
 
 const commonAmenities = [
-  'Pool', 'Gym', 'Parking', 'Elevator', 'Balcony', 'Garden', 
-  'Security', 'Furnished', 'Air Conditioning', 'Heating',
-  'Washer/Dryer', 'Dishwasher', 'Pet Friendly', 'Storage',
-  'Fireplace', 'Smart Home', 'Waterfront', 'Mountain View'
+  'Pool',
+  'Gym',
+  'Parking',
+  'Elevator',
+  'Balcony',
+  'Garden',
+  'Security',
+  'Furnished',
+  'Air Conditioning',
+  'Heating',
+  'Washer/Dryer',
+  'Dishwasher',
+  'Pet Friendly',
+  'Storage',
+  'Fireplace',
+  'Smart Home',
+  'Waterfront',
+  'Mountain View',
 ];
+
+const mapProvider = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ? PROVIDER_GOOGLE : undefined;
 
 export default function AddPropertyScreen() {
   const router = useRouter();
-  const { addProperty } = usePropertyStore();
-  
+  const { editId } = useLocalSearchParams<{ editId?: string }>();
+  const { user } = useAuthStore();
+  const { properties, addProperty, updateProperty, updatePropertyFacilities } = usePropertyStore();
+
+  const editingProperty = useMemo(
+    () => properties.find((property) => property.id === editId),
+    [properties, editId]
+  );
+
+  const isEditMode = Boolean(editingProperty);
+  const canEdit = !editingProperty || (!!user && editingProperty.listedByUserId === user.id);
+
   const [title, setTitle] = useState('');
   const [price, setPrice] = useState('');
   const [address, setAddress] = useState('');
@@ -70,100 +107,146 @@ export default function AddPropertyScreen() {
   const [state, setState] = useState('');
   const [zipCode, setZipCode] = useState('');
   const [description, setDescription] = useState('');
-  const [bedrooms, setBedrooms] = useState('');
-  const [bathrooms, setBathrooms] = useState('');
-  const [squareFeet, setSquareFeet] = useState('');
-  const [yearBuilt, setYearBuilt] = useState('');
+  const [bedrooms, setBedrooms] = useState('0');
+  const [bathrooms, setBathrooms] = useState('0');
+  const [squareFeet, setSquareFeet] = useState('0');
+  const [yearBuilt, setYearBuilt] = useState(String(new Date().getFullYear()));
   const [propertyType, setPropertyType] = useState('');
   const [listingType, setListingType] = useState('sell');
+  const [listingStatus, setListingStatus] = useState<ListingStatus>('available');
   const [paymentFrequency, setPaymentFrequency] = useState<string | undefined>();
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
   const [images, setImages] = useState<string[]>([]);
-  
-  // Reset payment frequency when listing type changes
+  const [landUnit, setLandUnit] = useState<LandUnit>('plot');
+  const [landQuantity, setLandQuantity] = useState('1');
+  const [latitude, setLatitude] = useState('6.5244');
+  const [longitude, setLongitude] = useState('3.3792');
+  const [submitting, setSubmitting] = useState(false);
+
   useEffect(() => {
-    setPaymentFrequency(undefined);
-  }, [listingType]);
-  
+    if (!editingProperty) return;
+
+    setTitle(editingProperty.title);
+    setPrice(String(editingProperty.price));
+    setAddress(editingProperty.address);
+    setCity(editingProperty.city);
+    setState(editingProperty.state);
+    setZipCode(editingProperty.zipCode);
+    setDescription(editingProperty.description);
+    setBedrooms(String(editingProperty.bedrooms));
+    setBathrooms(String(editingProperty.bathrooms));
+    setSquareFeet(String(editingProperty.squareFeet));
+    setYearBuilt(String(editingProperty.yearBuilt));
+    setPropertyType(editingProperty.type);
+    setListingType(editingProperty.listingType);
+    setListingStatus(editingProperty.listingStatus || 'available');
+    setSelectedAmenities(editingProperty.amenities || []);
+    setImages(editingProperty.images || []);
+    setLatitude(String(editingProperty.latitude));
+    setLongitude(String(editingProperty.longitude));
+
+    if (editingProperty.type === 'landed' && editingProperty.landDetails) {
+      setLandUnit(editingProperty.landDetails.unit);
+      setLandQuantity(String(editingProperty.landDetails.quantity));
+    }
+
+    if (editingProperty.paymentFrequency?.rent) {
+      setPaymentFrequency(editingProperty.paymentFrequency.rent);
+    } else if (editingProperty.paymentFrequency?.['short-let']) {
+      setPaymentFrequency(editingProperty.paymentFrequency['short-let']);
+    }
+  }, [editingProperty]);
+
+  useEffect(() => {
+    if (!isEditMode) {
+      setPaymentFrequency(undefined);
+    }
+  }, [listingType, isEditMode]);
+
+  const isLandProperty = propertyType === 'landed';
+
   const handleAddImage = async () => {
     if (Platform.OS === 'web') {
       Alert.alert('Not Available', 'Image picking is not fully supported on web.');
       return;
     }
-    
+
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         quality: 0.8,
       });
-      
+
       if (!result.canceled && result.assets && result.assets.length > 0) {
         setImages([...images, result.assets[0].uri]);
       }
-    } catch (error) {
-      console.error('Error picking image:', error);
+    } catch {
       Alert.alert('Error', 'Failed to pick image');
     }
   };
-  
+
   const handleRemoveImage = (index: number) => {
-    setImages(images.filter((_, i) => i !== index));
+    setImages(images.filter((_, imageIndex) => imageIndex !== index));
   };
-  
+
   const toggleAmenity = (amenity: string) => {
     if (selectedAmenities.includes(amenity)) {
-      setSelectedAmenities(selectedAmenities.filter(a => a !== amenity));
-    } else {
-      setSelectedAmenities([...selectedAmenities, amenity]);
+      setSelectedAmenities(selectedAmenities.filter((selected) => selected !== amenity));
+      return;
     }
+
+    setSelectedAmenities([...selectedAmenities, amenity]);
   };
-  
+
+  const onMapPress = (event: MapPressEvent) => {
+    const selectedLatitude = event.nativeEvent.coordinate.latitude;
+    const selectedLongitude = event.nativeEvent.coordinate.longitude;
+    setLatitude(selectedLatitude.toFixed(6));
+    setLongitude(selectedLongitude.toFixed(6));
+  };
+
   const validateForm = () => {
-    if (!title) return 'Please enter a title';
+    if (!title.trim()) return 'Please enter a title';
     if (!price || isNaN(Number(price))) return 'Please enter a valid price';
-    if (!address) return 'Please enter an address';
-    if (!city) return 'Please enter a city';
-    if (!state) return 'Please enter a state';
-    if (!zipCode) return 'Please enter a ZIP code';
-    if (!bedrooms || isNaN(Number(bedrooms))) return 'Please enter a valid number of bedrooms';
-    if (!bathrooms || isNaN(Number(bathrooms))) return 'Please enter a valid number of bathrooms';
-    if (!squareFeet || isNaN(Number(squareFeet))) return 'Please enter valid square footage';
-    if (!yearBuilt || isNaN(Number(yearBuilt))) return 'Please enter a valid year built';
+    if (!address.trim()) return 'Please enter an address';
+    if (!city.trim()) return 'Please enter a city';
+    if (!state.trim()) return 'Please enter a state';
+    if (!zipCode.trim()) return 'Please enter a ZIP code';
     if (!propertyType) return 'Please select a property type';
     if (!listingType) return 'Please select a listing type';
     if ((listingType === 'rent' || listingType === 'short-let') && !paymentFrequency) {
       return 'Please select a payment frequency';
     }
-    if (images.length === 0) return 'Please add at least one image';
-    
-    return null;
-  };
-  
-  const handleSubmit = () => {
-    const error = validateForm();
-    if (error) {
-      Alert.alert('Validation Error', error);
-      return;
-    }
-    
-    // For demo purposes, we'll use placeholder images if on web
-    const propertyImages = images.length > 0 ? images : [
-      'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2075&q=80',
-      'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2070&q=80'
-    ];
-    
-    // Create payment frequency object based on listing type
-    let paymentFrequencyObj = undefined;
-    if (paymentFrequency) {
-      if (listingType === 'rent') {
-        paymentFrequencyObj = { rent: paymentFrequency as 'monthly' | 'yearly' };
-      } else if (listingType === 'short-let') {
-        paymentFrequencyObj = { 'short-let': paymentFrequency as 'daily' | 'weekly' | 'monthly' };
+
+    if (!isLandProperty) {
+      if (!bedrooms || isNaN(Number(bedrooms))) return 'Please enter valid bedrooms';
+      if (!bathrooms || isNaN(Number(bathrooms))) return 'Please enter valid bathrooms';
+      if (!squareFeet || isNaN(Number(squareFeet))) return 'Please enter valid square footage';
+    } else {
+      if (!landQuantity || isNaN(Number(landQuantity)) || Number(landQuantity) <= 0) {
+        return 'Please enter valid land quantity';
       }
     }
-    
-    const newProperty = {
+
+    if (!yearBuilt || isNaN(Number(yearBuilt))) return 'Please enter a valid year built';
+    if (!latitude || isNaN(Number(latitude))) return 'Please enter valid latitude';
+    if (!longitude || isNaN(Number(longitude))) return 'Please enter valid longitude';
+    if (images.length === 0) return 'Please add at least one image';
+
+    return null;
+  };
+
+  const buildPropertyPayload = (): Omit<Property, 'id'> => {
+    const paymentFrequencyObj = !paymentFrequency
+      ? undefined
+      : listingType === 'rent'
+      ? { rent: paymentFrequency as 'monthly' | 'yearly' }
+      : listingType === 'short-let'
+      ? { 'short-let': paymentFrequency as 'daily' | 'weekly' | 'monthly' }
+      : undefined;
+
+    return {
       title,
       price: Number(price),
       address,
@@ -171,37 +254,110 @@ export default function AddPropertyScreen() {
       state,
       zipCode,
       description,
-      bedrooms: Number(bedrooms),
-      bathrooms: Number(bathrooms),
-      squareFeet: Number(squareFeet),
+      bedrooms: isLandProperty ? 0 : Number(bedrooms),
+      bathrooms: isLandProperty ? 0 : Number(bathrooms),
+      squareFeet: isLandProperty ? 0 : Number(squareFeet),
       yearBuilt: Number(yearBuilt),
-      type: propertyType as any,
-      listingType: listingType as any,
+      type: propertyType as Property['type'],
+      listingType: listingType as Property['listingType'],
+      listingStatus,
       amenities: selectedAmenities,
-      images: propertyImages,
-      // Generate random coordinates for demo purposes
-      latitude: 40 + Math.random() * 10,
-      longitude: -100 - Math.random() * 20,
+      images,
+      latitude: Number(latitude),
+      longitude: Number(longitude),
       isFeatured: false,
-      paymentFrequency: paymentFrequencyObj
+      paymentFrequency: paymentFrequencyObj,
+      landDetails: isLandProperty
+        ? {
+            unit: landUnit,
+            quantity: Number(landQuantity),
+          }
+        : undefined,
+      listedByUserId: user?.id,
+      lister: {
+        name: user?.name || 'Property Owner',
+        companyName: user?.companyName,
+        description: user?.description,
+        phone: user?.phone,
+        whatsapp: user?.whatsapp || user?.phone,
+        address: user?.address,
+      },
+      nearbyFacilities: editingProperty?.nearbyFacilities || [],
     };
-    
-    addProperty(newProperty);
-    Alert.alert(
-      'Success', 
-      'Property added successfully!',
-      [{ text: 'OK', onPress: () => router.push('/') }]
-    );
   };
 
-  // Get available payment frequencies based on listing type
+  const updateFacilities = async (propertyId: string) => {
+    const facilities = await getNearbyFacilityDistances(Number(latitude), Number(longitude));
+    if (facilities.length > 0) {
+      updatePropertyFacilities(propertyId, facilities);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!user) {
+      Alert.alert('Sign In Required', 'Please sign in before listing or editing properties.');
+      router.push('/login');
+      return;
+    }
+
+    if (isEditMode && !canEdit) {
+      Alert.alert('Not Allowed', 'Only the original lister can edit this property.');
+      return;
+    }
+
+    const validationError = validateForm();
+    if (validationError) {
+      Alert.alert('Validation Error', validationError);
+      return;
+    }
+
+    const payload = buildPropertyPayload();
+
+    try {
+      setSubmitting(true);
+      let propertyId = editingProperty?.id;
+
+      if (editingProperty) {
+        updateProperty(editingProperty.id, payload);
+      } else {
+        propertyId = addProperty(payload);
+      }
+
+      if (propertyId) {
+        await updateFacilities(propertyId);
+      }
+
+      Alert.alert(
+        'Success',
+        editingProperty ? 'Property updated successfully!' : 'Property added successfully!',
+        [{ text: 'OK', onPress: () => router.push('/' as any) }]
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const getPaymentFrequencyOptions = () => {
     if (listingType === 'rent') {
       return paymentFrequencies.rent;
-    } else if (listingType === 'short-let') {
-      return paymentFrequencies["short-let"];
     }
+
+    if (listingType === 'short-let') {
+      return paymentFrequencies['short-let'];
+    }
+
     return [];
+  };
+
+  const getPriceLabel = () => {
+    if (listingType === 'sell') return '(₦)';
+    if (listingType === 'rent') return paymentFrequency === 'yearly' ? '(₦/year)' : '(₦/month)';
+    if (listingType === 'short-let') {
+      if (paymentFrequency === 'daily') return '(₦/day)';
+      if (paymentFrequency === 'weekly') return '(₦/week)';
+      if (paymentFrequency === 'monthly') return '(₦/month)';
+    }
+    return '(₦)';
   };
 
   const paymentFrequencyOptions = getPaymentFrequencyOptions();
@@ -209,17 +365,17 @@ export default function AddPropertyScreen() {
 
   return (
     <>
-      <Stack.Screen 
+      <Stack.Screen
         options={{
-          title: 'Add Property',
+          title: isEditMode ? 'Edit Property' : 'Add Property',
           headerBackTitle: 'Cancel',
         }}
       />
-      
+
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         <View style={styles.formContainer}>
           <Text style={styles.sectionTitle}>Property Information</Text>
-          
+
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Title</Text>
             <TextInput
@@ -230,52 +386,52 @@ export default function AddPropertyScreen() {
               placeholderTextColor={Colors.light.subtext}
             />
           </View>
-          
+
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Listing Type</Text>
             <View style={styles.optionsGrid}>
-              {listingTypes.map((type, index) => (
+              {listingTypes.map((type) => (
                 <Pressable
-                  key={index}
-                  style={[
-                    styles.optionButton,
-                    listingType === type.value && styles.optionSelected
-                  ]}
+                  key={type.value}
+                  style={[styles.optionButton, listingType === type.value && styles.optionSelected]}
                   onPress={() => setListingType(type.value)}
                 >
-                  <Text 
-                    style={[
-                      styles.optionText,
-                      listingType === type.value && styles.optionTextSelected
-                    ]}
-                  >
+                  <Text style={[styles.optionText, listingType === type.value && styles.optionTextSelected]}>
                     {type.label}
                   </Text>
                 </Pressable>
               ))}
             </View>
           </View>
-          
-          {/* Payment Frequency - Only show for rent or short-let */}
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Status</Text>
+            <View style={styles.optionsGrid}>
+              {listingStatuses.map((status) => (
+                <Pressable
+                  key={status.value}
+                  style={[styles.optionButton, listingStatus === status.value && styles.optionSelected]}
+                  onPress={() => setListingStatus(status.value)}
+                >
+                  <Text style={[styles.optionText, listingStatus === status.value && styles.optionTextSelected]}>
+                    {status.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
           {showPaymentFrequency && (
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Payment Frequency</Text>
               <View style={styles.optionsGrid}>
-                {paymentFrequencyOptions.map((option, index) => (
+                {paymentFrequencyOptions.map((option) => (
                   <Pressable
-                    key={index}
-                    style={[
-                      styles.optionButton,
-                      paymentFrequency === option.value && styles.optionSelected
-                    ]}
+                    key={option.value}
+                    style={[styles.optionButton, paymentFrequency === option.value && styles.optionSelected]}
                     onPress={() => setPaymentFrequency(option.value)}
                   >
-                    <Text 
-                      style={[
-                        styles.optionText,
-                        paymentFrequency === option.value && styles.optionTextSelected
-                      ]}
-                    >
+                    <Text style={[styles.optionText, paymentFrequency === option.value && styles.optionTextSelected]}>
                       {option.label}
                     </Text>
                   </Pressable>
@@ -283,36 +439,26 @@ export default function AddPropertyScreen() {
               </View>
             </View>
           )}
-          
+
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Property Type</Text>
             <View style={styles.optionsGrid}>
-              {propertyTypes.map((type, index) => (
+              {propertyTypes.map((type) => (
                 <Pressable
-                  key={index}
-                  style={[
-                    styles.optionButton,
-                    propertyType === type.value && styles.optionSelected
-                  ]}
+                  key={type.value}
+                  style={[styles.optionButton, propertyType === type.value && styles.optionSelected]}
                   onPress={() => setPropertyType(type.value)}
                 >
-                  <Text 
-                    style={[
-                      styles.optionText,
-                      propertyType === type.value && styles.optionTextSelected
-                    ]}
-                  >
+                  <Text style={[styles.optionText, propertyType === type.value && styles.optionTextSelected]}>
                     {type.label}
                   </Text>
                 </Pressable>
               ))}
             </View>
           </View>
-          
+
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>
-              Price {getPriceLabel()}
-            </Text>
+            <Text style={styles.label}>Price {getPriceLabel()}</Text>
             <TextInput
               style={styles.input}
               value={price}
@@ -322,9 +468,42 @@ export default function AddPropertyScreen() {
               keyboardType="numeric"
             />
           </View>
-          
+
+          {isLandProperty && (
+            <>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Land Unit</Text>
+                <View style={styles.optionsGrid}>
+                  {landUnits.map((unit) => (
+                    <Pressable
+                      key={unit.value}
+                      style={[styles.optionButton, landUnit === unit.value && styles.optionSelected]}
+                      onPress={() => setLandUnit(unit.value)}
+                    >
+                      <Text style={[styles.optionText, landUnit === unit.value && styles.optionTextSelected]}>
+                        {unit.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Land Quantity</Text>
+                <TextInput
+                  style={styles.input}
+                  value={landQuantity}
+                  onChangeText={setLandQuantity}
+                  placeholder="Example: 3"
+                  placeholderTextColor={Colors.light.subtext}
+                  keyboardType="numeric"
+                />
+              </View>
+            </>
+          )}
+
           <Text style={styles.sectionTitle}>Location</Text>
-          
+
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Address</Text>
             <TextInput
@@ -335,26 +514,17 @@ export default function AddPropertyScreen() {
               placeholderTextColor={Colors.light.subtext}
             />
           </View>
-          
+
           <View style={styles.inputGroup}>
             <Text style={styles.label}>State</Text>
-            <StateSelector 
-              value={state}
-              onSelect={setState}
-              placeholder="Select state"
-            />
+            <StateSelector value={state} onSelect={setState} placeholder="Select state" />
           </View>
-          
+
           <View style={styles.inputGroup}>
             <Text style={styles.label}>City</Text>
-            <CitySelector 
-              value={city}
-              onSelect={setCity}
-              selectedState={state}
-              placeholder="Select city"
-            />
+            <CitySelector value={city} onSelect={setCity} selectedState={state} placeholder="Select city" />
           </View>
-          
+
           <View style={styles.inputGroup}>
             <Text style={styles.label}>ZIP Code</Text>
             <TextInput
@@ -366,61 +536,119 @@ export default function AddPropertyScreen() {
               keyboardType="numeric"
             />
           </View>
-          
+
+          <View style={styles.rowInputs}>
+            <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}> 
+              <Text style={styles.label}>Latitude</Text>
+              <TextInput
+                style={styles.input}
+                value={latitude}
+                onChangeText={setLatitude}
+                placeholder="6.5244"
+                placeholderTextColor={Colors.light.subtext}
+                keyboardType="numeric"
+              />
+            </View>
+
+            <View style={[styles.inputGroup, { flex: 1, marginLeft: 8 }]}> 
+              <Text style={styles.label}>Longitude</Text>
+              <TextInput
+                style={styles.input}
+                value={longitude}
+                onChangeText={setLongitude}
+                placeholder="3.3792"
+                placeholderTextColor={Colors.light.subtext}
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+
+          {Platform.OS !== 'web' && (
+            <View style={styles.mapContainer}>
+              <Text style={styles.mapInstruction}>Tap map to set exact location</Text>
+              <MapView
+                provider={mapProvider}
+                style={styles.map}
+                onPress={onMapPress}
+                initialRegion={{
+                  latitude: Number(latitude) || 6.5244,
+                  longitude: Number(longitude) || 3.3792,
+                  latitudeDelta: 0.05,
+                  longitudeDelta: 0.05,
+                }}
+                region={{
+                  latitude: Number(latitude) || 6.5244,
+                  longitude: Number(longitude) || 3.3792,
+                  latitudeDelta: 0.05,
+                  longitudeDelta: 0.05,
+                }}
+              >
+                <Marker
+                  coordinate={{
+                    latitude: Number(latitude) || 6.5244,
+                    longitude: Number(longitude) || 3.3792,
+                  }}
+                />
+              </MapView>
+            </View>
+          )}
+
           <Text style={styles.sectionTitle}>Details</Text>
-          
-          <View style={styles.rowInputs}>
-            <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-              <Text style={styles.label}>Bedrooms</Text>
-              <TextInput
-                style={styles.input}
-                value={bedrooms}
-                onChangeText={setBedrooms}
-                placeholder="0"
-                placeholderTextColor={Colors.light.subtext}
-                keyboardType="numeric"
-              />
-            </View>
-            
-            <View style={[styles.inputGroup, { flex: 1, marginLeft: 8 }]}>
-              <Text style={styles.label}>Bathrooms</Text>
-              <TextInput
-                style={styles.input}
-                value={bathrooms}
-                onChangeText={setBathrooms}
-                placeholder="0"
-                placeholderTextColor={Colors.light.subtext}
-                keyboardType="numeric"
-              />
-            </View>
+
+          {!isLandProperty && (
+            <>
+              <View style={styles.rowInputs}>
+                <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}> 
+                  <Text style={styles.label}>Bedrooms</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={bedrooms}
+                    onChangeText={setBedrooms}
+                    placeholder="0"
+                    placeholderTextColor={Colors.light.subtext}
+                    keyboardType="numeric"
+                  />
+                </View>
+
+                <View style={[styles.inputGroup, { flex: 1, marginLeft: 8 }]}> 
+                  <Text style={styles.label}>Bathrooms</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={bathrooms}
+                    onChangeText={setBathrooms}
+                    placeholder="0"
+                    placeholderTextColor={Colors.light.subtext}
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Square Feet</Text>
+                <TextInput
+                  style={styles.input}
+                  value={squareFeet}
+                  onChangeText={setSquareFeet}
+                  placeholder="0"
+                  placeholderTextColor={Colors.light.subtext}
+                  keyboardType="numeric"
+                />
+              </View>
+            </>
+          )}
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Year Built</Text>
+            <TextInput
+              style={styles.input}
+              value={yearBuilt}
+              onChangeText={setYearBuilt}
+              placeholder="2023"
+              placeholderTextColor={Colors.light.subtext}
+              keyboardType="numeric"
+            />
           </View>
-          
-          <View style={styles.rowInputs}>
-            <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-              <Text style={styles.label}>Square Feet</Text>
-              <TextInput
-                style={styles.input}
-                value={squareFeet}
-                onChangeText={setSquareFeet}
-                placeholder="0"
-                placeholderTextColor={Colors.light.subtext}
-                keyboardType="numeric"
-              />
-            </View>
-            
-            <View style={[styles.inputGroup, { flex: 1, marginLeft: 8 }]}>
-              <Text style={styles.label}>Year Built</Text>
-              <TextInput
-                style={styles.input}
-                value={yearBuilt}
-                onChangeText={setYearBuilt}
-                placeholder="2023"
-                placeholderTextColor={Colors.light.subtext}
-                keyboardType="numeric"
-              />
-            </View>
-          </View>
-          
+
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Description</Text>
             <TextInput
@@ -434,25 +662,22 @@ export default function AddPropertyScreen() {
               textAlignVertical="top"
             />
           </View>
-          
+
           <Text style={styles.sectionTitle}>Amenities</Text>
           <View style={styles.amenitiesContainer}>
-            {commonAmenities.map((amenity, index) => (
+            {commonAmenities.map((amenity) => (
               <Pressable
-                key={index}
-                style={[
-                  styles.amenityButton,
-                  selectedAmenities.includes(amenity) && styles.amenitySelected
-                ]}
+                key={amenity}
+                style={[styles.amenityButton, selectedAmenities.includes(amenity) && styles.amenitySelected]}
                 onPress={() => toggleAmenity(amenity)}
               >
                 {selectedAmenities.includes(amenity) && (
                   <Check size={14} color={Colors.light.primary} style={styles.checkIcon} />
                 )}
-                <Text 
+                <Text
                   style={[
                     styles.amenityText,
-                    selectedAmenities.includes(amenity) && styles.amenityTextSelected
+                    selectedAmenities.includes(amenity) && styles.amenityTextSelected,
                   ]}
                 >
                   {amenity}
@@ -460,53 +685,39 @@ export default function AddPropertyScreen() {
               </Pressable>
             ))}
           </View>
-          
+
           <Text style={styles.sectionTitle}>Images</Text>
           <View style={styles.imagesContainer}>
             <Pressable style={styles.addImageButton} onPress={handleAddImage}>
               <Camera size={24} color={Colors.light.primary} />
               <Text style={styles.addImageText}>Add Image</Text>
             </Pressable>
-            
+
             {images.map((uri, index) => (
-              <View key={index} style={styles.imagePreviewContainer}>
-                <Image
-                  source={{ uri }}
-                  style={styles.imagePreview}
-                  contentFit="cover"
-                />
-                <Pressable 
-                  style={styles.removeImageButton}
-                  onPress={() => handleRemoveImage(index)}
-                >
+              <View key={`${uri}-${index}`} style={styles.imagePreviewContainer}>
+                <Image source={{ uri }} style={styles.imagePreview} contentFit="cover" />
+                <Pressable style={styles.removeImageButton} onPress={() => handleRemoveImage(index)}>
                   <X size={16} color="white" />
                 </Pressable>
               </View>
             ))}
           </View>
-          
-          <Pressable style={styles.submitButton} onPress={handleSubmit}>
-            <Text style={styles.submitButtonText}>Add Property</Text>
+
+          <Pressable style={[styles.submitButton, submitting && styles.disabledButton]} onPress={handleSubmit}>
+            <Text style={styles.submitButtonText}>
+              {submitting
+                ? isEditMode
+                  ? 'Updating Property...'
+                  : 'Adding Property...'
+                : isEditMode
+                ? 'Update Property'
+                : 'Add Property'}
+            </Text>
           </Pressable>
         </View>
       </ScrollView>
     </>
   );
-  
-  // Helper function to get the appropriate price label based on listing type and payment frequency
-  function getPriceLabel() {
-    if (listingType === 'sell') {
-      return '(₦)';
-    } else if (listingType === 'rent') {
-      return paymentFrequency === 'yearly' ? '(₦/year)' : '(₦/month)';
-    } else if (listingType === 'short-let') {
-      if (paymentFrequency === 'daily') return '(₦/day)';
-      if (paymentFrequency === 'weekly') return '(₦/week)';
-      if (paymentFrequency === 'monthly') return '(₦/month)';
-      return '(₦)';
-    }
-    return '(₦)';
-  }
 }
 
 const styles = StyleSheet.create({
@@ -577,6 +788,19 @@ const styles = StyleSheet.create({
   optionTextSelected: {
     color: Colors.light.primary,
     fontWeight: '500',
+  },
+  mapContainer: {
+    marginBottom: 16,
+  },
+  mapInstruction: {
+    color: Colors.light.subtext,
+    marginBottom: 8,
+    fontSize: 13,
+  },
+  map: {
+    height: 220,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
   amenitiesContainer: {
     flexDirection: 'row',
@@ -661,6 +885,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 24,
     marginBottom: 40,
+  },
+  disabledButton: {
+    opacity: 0.7,
   },
   submitButtonText: {
     color: 'white',

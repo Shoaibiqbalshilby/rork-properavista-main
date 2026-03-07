@@ -52,6 +52,7 @@ function RootLayoutNav() {
       <Stack.Screen name="login" options={{ title: "Sign In" }} />
       <Stack.Screen name="signup" options={{ title: "Sign Up" }} />
       <Stack.Screen name="add-property" options={{ title: "Add Property" }} />
+      <Stack.Screen name="my-properties" options={{ title: "My Properties" }} />
       <Stack.Screen name="property/[id]" options={{ title: "Property" }} />
     </Stack>
   );

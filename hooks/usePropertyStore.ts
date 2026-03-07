@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Property, PropertyFilter } from '@/types/property';
+import { NearbyFacility, Property, PropertyFilter } from '@/types/property';
 import { properties as mockProperties } from '@/mocks/properties';
 import { calculateDistance } from '@/utils/distance';
 
@@ -17,7 +17,10 @@ interface PropertyState {
   getFilteredProperties: () => Property[];
   getFeaturedProperties: () => Property[];
   getPropertiesNearby: (latitude: number, longitude: number, maxDistance: number) => Property[];
-  addProperty: (property: Omit<Property, 'id'>) => void;
+  addProperty: (property: Omit<Property, 'id'>) => string;
+  updateProperty: (id: string, updates: Partial<Omit<Property, 'id'>>) => void;
+  updatePropertyFacilities: (id: string, facilities: NearbyFacility[]) => void;
+  getPropertiesByUser: (userId: string) => Property[];
 }
 
 export const usePropertyStore = create<PropertyState>()(
@@ -112,15 +115,52 @@ export const usePropertyStore = create<PropertyState>()(
         });
       },
       
-      addProperty: (property) => set((state) => {
+      addProperty: (property) => {
         // Generate a unique ID
         const id = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        const newProperty = { ...property, id };
-        
-        return {
-          properties: [...state.properties, newProperty]
+        const timestamp = new Date().toISOString();
+        const newProperty = {
+          ...property,
+          id,
+          listingStatus: property.listingStatus || 'available',
+          createdAt: property.createdAt || timestamp,
+          updatedAt: timestamp,
         };
-      })
+
+        set((state) => ({
+          properties: [...state.properties, newProperty]
+        }));
+
+        return id;
+      },
+
+      updateProperty: (id, updates) => set((state) => ({
+        properties: state.properties.map((property) =>
+          property.id === id
+            ? {
+                ...property,
+                ...updates,
+                updatedAt: new Date().toISOString(),
+              }
+            : property
+        ),
+      })),
+
+      updatePropertyFacilities: (id, facilities) => set((state) => ({
+        properties: state.properties.map((property) =>
+          property.id === id
+            ? {
+                ...property,
+                nearbyFacilities: facilities,
+                updatedAt: new Date().toISOString(),
+              }
+            : property
+        ),
+      })),
+
+      getPropertiesByUser: (userId) => {
+        return get().properties.filter((property) => property.listedByUserId === userId);
+      }
     }),
     {
       name: 'property-storage',

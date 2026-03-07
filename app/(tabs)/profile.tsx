@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View, Text, Pressable, ScrollView, Alert } from 'react-native';
+import { StyleSheet, View, Text, Pressable, ScrollView, Alert, TextInput } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { 
@@ -19,7 +19,21 @@ import Colors from '@/constants/colors';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { user, isAuthenticated, logout } = useAuthStore();
+  const { user, isAuthenticated, logout, updateProfile } = useAuthStore();
+  const [companyName, setCompanyName] = React.useState('');
+  const [description, setDescription] = React.useState('');
+  const [phone, setPhone] = React.useState('');
+  const [whatsapp, setWhatsapp] = React.useState('');
+  const [address, setAddress] = React.useState('');
+
+  React.useEffect(() => {
+    if (!user) return;
+    setCompanyName(user.companyName || '');
+    setDescription(user.description || '');
+    setPhone(user.phone || '');
+    setWhatsapp(user.whatsapp || '');
+    setAddress(user.address || '');
+  }, [user]);
   
   const handleLogin = () => {
     router.push('/login' as any);
@@ -58,6 +72,18 @@ export default function ProfileScreen() {
     { icon: <HelpCircle size={22} color={Colors.light.text} />, title: 'Help & Support', route: '/help' },
     { icon: <LogOut size={22} color={Colors.light.error} />, title: 'Log Out', onPress: handleLogout, isDestructive: true },
   ];
+
+  const handleSaveProfile = () => {
+    updateProfile({
+      companyName,
+      description,
+      phone,
+      whatsapp,
+      address,
+    });
+
+    Alert.alert('Saved', 'Profile details updated successfully.');
+  };
 
   return (
     <ScrollView style={styles.container}>
@@ -116,6 +142,75 @@ export default function ProfileScreen() {
         )}
       </View>
       
+      {isAuthenticated && (
+        <View style={styles.menuSection}>
+          <Text style={styles.menuSectionTitle}>Business Profile</Text>
+          <View style={styles.profileForm}>
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Company Name</Text>
+              <TextInput
+                style={styles.input}
+                value={companyName}
+                onChangeText={setCompanyName}
+                placeholder="Enter company name"
+                placeholderTextColor={Colors.light.subtext}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Description</Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                value={description}
+                onChangeText={setDescription}
+                placeholder="Tell clients about your company"
+                placeholderTextColor={Colors.light.subtext}
+                multiline
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Contact Phone</Text>
+              <TextInput
+                style={styles.input}
+                value={phone}
+                onChangeText={setPhone}
+                placeholder="e.g. +2348012345678"
+                placeholderTextColor={Colors.light.subtext}
+                keyboardType="phone-pad"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>WhatsApp Number</Text>
+              <TextInput
+                style={styles.input}
+                value={whatsapp}
+                onChangeText={setWhatsapp}
+                placeholder="e.g. +2348012345678"
+                placeholderTextColor={Colors.light.subtext}
+                keyboardType="phone-pad"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Address</Text>
+              <TextInput
+                style={styles.input}
+                value={address}
+                onChangeText={setAddress}
+                placeholder="Company address"
+                placeholderTextColor={Colors.light.subtext}
+              />
+            </View>
+
+            <Pressable style={styles.saveButton} onPress={handleSaveProfile}>
+              <Text style={styles.saveButtonText}>Save Profile</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
       {isAuthenticated && (
         <View style={styles.menuSection}>
           <Text style={styles.menuSectionTitle}>Account</Text>
@@ -260,6 +355,49 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: '500',
+  },
+  profileForm: {
+    marginHorizontal: 20,
+    padding: 16,
+    backgroundColor: Colors.light.card,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: 12,
+  },
+  inputGroup: {
+    marginBottom: 12,
+  },
+  inputLabel: {
+    fontSize: 13,
+    color: Colors.light.text,
+    fontWeight: '500',
+    marginBottom: 6,
+  },
+  input: {
+    backgroundColor: Colors.light.background,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: Colors.light.text,
+  },
+  textArea: {
+    minHeight: 90,
+    textAlignVertical: 'top',
+  },
+  saveButton: {
+    marginTop: 8,
+    backgroundColor: Colors.light.primary,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 15,
   },
   menuSection: {
     marginTop: 24,

@@ -8,6 +8,11 @@ export interface User {
   name: string;
   email: string;
   avatar?: string;
+  companyName?: string;
+  description?: string;
+  phone?: string;
+  whatsapp?: string;
+  address?: string;
 }
 
 interface AuthState {
@@ -21,6 +26,7 @@ interface AuthState {
   signup: (name: string, email: string, password: string) => Promise<boolean>;
   logout: () => void;
   clearError: () => void;
+  updateProfile: (updates: Partial<User>) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -125,6 +131,17 @@ export const useAuthStore = create<AuthState>()(
           error: null
         });
       },
+
+      updateProfile: (updates) => set((state) => {
+        if (!state.user) return state;
+
+        return {
+          user: {
+            ...state.user,
+            ...updates,
+          }
+        };
+      }),
       
       clearError: () => set({ error: null })
     }),

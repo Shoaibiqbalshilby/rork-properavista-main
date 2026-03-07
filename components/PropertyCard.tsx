@@ -47,6 +47,18 @@ export default function PropertyCard({ property, isFeatured = false, showDistanc
     }
   };
 
+  const getStatusLabel = () => {
+    switch (property.listingStatus) {
+      case 'reserved':
+        return 'Reserved';
+      case 'sold':
+        return 'Sold';
+      case 'available':
+      default:
+        return 'Available';
+    }
+  };
+
   // Calculate distance if user location is available and showDistance is true
   const distance = showDistance && userLocation ? 
     calculateDistance(
@@ -96,6 +108,9 @@ export default function PropertyCard({ property, isFeatured = false, showDistanc
         <View style={styles.listingTypeBadge}>
           <Text style={styles.listingTypeText}>{getListingTypeLabel()}</Text>
         </View>
+        <View style={styles.statusBadge}>
+          <Text style={styles.statusText}>{getStatusLabel()}</Text>
+        </View>
         <Pressable 
           style={styles.favoriteButton} 
           onPress={handleFavoritePress}
@@ -119,6 +134,13 @@ export default function PropertyCard({ property, isFeatured = false, showDistanc
         <Text style={styles.address} numberOfLines={1}>
           {property.address}, {property.city}, {property.state}
         </Text>
+
+        {property.type === 'landed' && property.landDetails && (
+          <Text style={styles.landText}>
+            Land: {property.landDetails.quantity} {property.landDetails.unit}
+            {property.landDetails.quantity > 1 ? 's' : ''}
+          </Text>
+        )}
         
         {distance !== null && (
           <View style={styles.distanceContainer}>
@@ -204,6 +226,20 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 4,
   },
+  statusBadge: {
+    position: 'absolute',
+    bottom: 12,
+    right: 56,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  statusText: {
+    color: Colors.light.text,
+    fontSize: 11,
+    fontWeight: '600',
+  },
   listingTypeText: {
     color: 'white',
     fontSize: 12,
@@ -244,6 +280,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.light.subtext,
     marginBottom: 8,
+  },
+  landText: {
+    fontSize: 13,
+    color: Colors.light.primary,
+    marginBottom: 8,
+    fontWeight: '500',
   },
   distanceContainer: {
     flexDirection: 'row',

@@ -1,57 +1,59 @@
 import React, { useState } from 'react';
-import { 
-  StyleSheet, 
-  View, 
-  Text, 
-  ScrollView, 
-  Pressable, 
-  Linking, 
-  Platform 
+import {
+  StyleSheet,
+  View,
+  Text,
+  ScrollView,
+  Pressable,
+  Linking,
+  Platform,
+  Alert,
 } from 'react-native';
-import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
-import { 
-  Heart, 
-  Share2, 
-  Bed, 
-  Bath, 
-  Square, 
-  Calendar, 
-  Phone, 
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import {
+  Bath,
+  Bed,
+  Calendar,
+  Heart,
+  MapPin,
   MessageCircle,
-  MapPin
+  Phone,
+  Share2,
+  Square,
+  Pencil,
 } from 'lucide-react-native';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { usePropertyStore } from '@/hooks/usePropertyStore';
 import { useLocationStore } from '@/hooks/useLocationStore';
-import PropertyImageGallery from '@/components/PropertyImageGallery';
+import { useAuthStore } from '@/hooks/useAuthStore';
 import PropertyFeature from '@/components/PropertyFeature';
+import PropertyImageGallery from '@/components/PropertyImageGallery';
 import Colors from '@/constants/colors';
 import { calculateDistance, formatDistance } from '@/utils/distance';
+import { normalizePhone, whatsappUrl } from '@/utils/contact';
+
+const mapProvider = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ? PROVIDER_GOOGLE : undefined;
 
 export default function PropertyDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { properties, favorites, toggleFavorite } = usePropertyStore();
   const { userLocation } = useLocationStore();
-  
-  const property = properties.find(p => p.id === id);
+  const { user } = useAuthStore();
+
+  const property = properties.find((item) => item.id === id);
   const isFavorite = favorites.includes(id);
-  
-  // For rental properties, allow selecting payment frequency
+  const canEdit = !!property && !!user && property.listedByUserId === user.id;
+
   const [selectedPaymentFrequency, setSelectedPaymentFrequency] = useState<string | undefined>(
-    property?.paymentFrequency?.rent || 
-    property?.paymentFrequency?.["short-let"] || 
-    undefined
+    property?.paymentFrequency?.rent || property?.paymentFrequency?.['short-let'] || undefined
   );
-  
-  // Calculate distance if user location is available
-  const distance = userLocation ? 
-    calculateDistance(
-      userLocation.latitude, 
-      userLocation.longitude, 
-      property?.latitude || 0, 
-      property?.longitude || 0
-    ) : null;
-  
+
+  const distance =
+    userLocation && property
+      ? calculateDistance(userLocation.latitude, userLocation.longitude, property.latitude, property.longitude)
+      : null;
+
   if (!property) {
     return (
       <View style={styles.notFoundContainer}>
@@ -62,96 +64,140 @@ export default function PropertyDetailScreen() {
       </View>
     );
   }
-  
+
   const handleFavoritePress = () => {
     toggleFavorite(id);
   };
-  
-  const handleSharePress = async () => {
-    try {
-      if (Platform.OS === 'web') {
-        alert('Sharing is not available on web');
-      } else {
-        // This would use the Share API on native platforms
-        alert('Share functionality would be implemented here');
-      }
-    } catch (error) {
-      console.error('Error sharing property:', error);
+
+  const handleSharePress = () => {
+    if (Platform.OS === 'web') {
+      Alert.alert('Sharing is not available on web');
+      return;
     }
+
+    Alert.alert('Share', 'Share functionality can be connected here.');
   };
-  
-  const handleContactPress = () => {
-    Linking.openURL(`tel:+1234567890`);
+
+  const handleContactPress = async () => {
+    const phone = normalizePhone(property.lister?.phone);
+    if (!phone) {
+      Alert.alert('Phone not available', 'Lister has not added a phone number yet.');
+      return;
+    }
+
+    const telUrl = `tel:${phone}`;
+    const canOpen = await Linking.canOpenURL(telUrl);
+    if (canOpen) {
+      Linking.openURL(telUrl);
+      return;
+    }
+
+    Alert.alert('Dialer unavailable', 'Your device could not open the phone dialer.');
   };
-  
-  const handleMessagePress = () => {
-    Linking.openURL(`sms:+1234567890`);
+
+  const handleMessagePress = async () => {
+    const message = `Hello, I am interested in your property: ${property.title}`;
+    const url = whatsappUrl(property.lister?.whatsapp || property.lister?.phone, message);
+
+    if (!url) {
+      Alert.alert('WhatsApp not available', 'Lister has not added a WhatsApp number yet.');
+      return;
+    }
+
+    const canOpen = await Linking.canOpenURL(url);
+    if (canOpen) {
+      Linking.openURL(url);
+      return;
+    }
+
+    Alert.alert('WhatsApp unavailable', 'Please ensure WhatsApp is installed on your device.');
   };
-  
-  const formatPrice = (price: number) => {
-    return price.toLocaleString('en-NG', {
+
+  const handleEditPress = () => {
+    router.push({
+      pathname: '/add-property',
+      params: { editId: property.id },
+    });
+  };
+
+  const formatPrice = (price: number) =>
+    price.toLocaleString('en-NG', {
       style: 'currency',
       currency: 'NGN',
       maximumFractionDigits: 0,
     });
-  };
 
   const getListingTypeLabel = () => {
-    switch(property.listingType) {
-      case 'rent': return 'For Rent';
-      case 'short-let': return 'Short-Let';
-      case 'sell': return 'For Sale';
-      default: return 'For Sale';
+    switch (property.listingType) {
+      case 'rent':
+        return 'For Rent';
+      case 'short-let':
+        return 'Short-Let';
+      case 'sell':
+      default:
+        return 'For Sale';
     }
   };
 
-  // Get available payment frequencies based on listing type
+  const getStatusLabel = () => {
+    switch (property.listingStatus) {
+      case 'reserved':
+        return 'Reserved';
+      case 'sold':
+        return 'Sold';
+      case 'available':
+      default:
+        return 'Available';
+    }
+  };
+
   const getPaymentFrequencies = () => {
     if (property.listingType === 'rent') {
       return [
         { label: 'Monthly', value: 'monthly' },
-        { label: 'Yearly', value: 'yearly' }
+        { label: 'Yearly', value: 'yearly' },
       ];
-    } else if (property.listingType === 'short-let') {
+    }
+
+    if (property.listingType === 'short-let') {
       return [
         { label: 'Daily', value: 'daily' },
         { label: 'Weekly', value: 'weekly' },
-        { label: 'Monthly', value: 'monthly' }
+        { label: 'Monthly', value: 'monthly' },
       ];
     }
+
     return [];
   };
 
-  // Get payment frequency label for display
   const getPaymentFrequencyLabel = (frequency: string) => {
-    switch(frequency) {
-      case 'daily': return '/day';
-      case 'weekly': return '/week';
-      case 'monthly': return '/month';
-      case 'yearly': return '/year';
-      default: return '';
+    switch (frequency) {
+      case 'daily':
+        return '/day';
+      case 'weekly':
+        return '/week';
+      case 'monthly':
+        return '/month';
+      case 'yearly':
+        return '/year';
+      default:
+        return '';
     }
   };
 
-  // Calculate price based on selected payment frequency
   const calculateAdjustedPrice = () => {
     if (!selectedPaymentFrequency || property.listingType === 'sell') {
       return property.price;
     }
 
-    // Base price is assumed to be monthly for rent and daily for short-let
     if (property.listingType === 'rent') {
-      if (selectedPaymentFrequency === 'yearly') {
-        return property.price * 12; // Annual price
-      }
-      return property.price; // Monthly price
-    } else if (property.listingType === 'short-let') {
-      if (selectedPaymentFrequency === 'weekly') {
-        return property.price * 7; // Weekly price
-      } else if (selectedPaymentFrequency === 'monthly') {
-        return property.price * 30; // Monthly price (approximate)
-      }
-      return property.price; // Daily price
+      return selectedPaymentFrequency === 'yearly' ? property.price * 12 : property.price;
+    }
+
+    if (property.listingType === 'short-let') {
+      if (selectedPaymentFrequency === 'weekly') return property.price * 7;
+      if (selectedPaymentFrequency === 'monthly') return property.price * 30;
+      return property.price;
     }
 
     return property.price;
@@ -163,11 +209,16 @@ export default function PropertyDetailScreen() {
 
   return (
     <>
-      <Stack.Screen 
+      <Stack.Screen
         options={{
           title: property.title,
           headerRight: () => (
             <View style={styles.headerButtons}>
+              {canEdit && (
+                <Pressable style={styles.headerButton} onPress={handleEditPress}>
+                  <Pencil size={20} color={Colors.light.text} />
+                </Pressable>
+              )}
               <Pressable style={styles.headerButton} onPress={handleSharePress}>
                 <Share2 size={22} color={Colors.light.text} />
               </Pressable>
@@ -182,40 +233,42 @@ export default function PropertyDetailScreen() {
           ),
         }}
       />
-      
+
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         <PropertyImageGallery images={property.images} />
-        
+
         <View style={styles.contentContainer}>
-          <View style={styles.listingTypeContainer}>
-            <Text style={styles.listingTypeText}>{getListingTypeLabel()}</Text>
+          <View style={styles.badgesRow}>
+            <View style={styles.listingTypeContainer}>
+              <Text style={styles.listingTypeText}>{getListingTypeLabel()}</Text>
+            </View>
+            <View style={styles.statusBadge}>
+              <Text style={styles.statusText}>{getStatusLabel()}</Text>
+            </View>
           </View>
-          
+
           <Text style={styles.price}>
             {formatPrice(adjustedPrice)}
             {selectedPaymentFrequency && (
-              <Text style={styles.priceUnit}>
-                {getPaymentFrequencyLabel(selectedPaymentFrequency)}
-              </Text>
+              <Text style={styles.priceUnit}>{getPaymentFrequencyLabel(selectedPaymentFrequency)}</Text>
             )}
           </Text>
-          
-          {/* Payment Frequency Selector */}
+
           {showPaymentOptions && (
             <View style={styles.paymentOptionsContainer}>
-              {paymentFrequencies.map((option, index) => (
+              {paymentFrequencies.map((option) => (
                 <Pressable
-                  key={index}
+                  key={option.value}
                   style={[
                     styles.paymentOption,
-                    selectedPaymentFrequency === option.value && styles.paymentOptionSelected
+                    selectedPaymentFrequency === option.value && styles.paymentOptionSelected,
                   ]}
                   onPress={() => setSelectedPaymentFrequency(option.value)}
                 >
-                  <Text 
+                  <Text
                     style={[
                       styles.paymentOptionText,
-                      selectedPaymentFrequency === option.value && styles.paymentOptionTextSelected
+                      selectedPaymentFrequency === option.value && styles.paymentOptionTextSelected,
                     ]}
                   >
                     {option.label}
@@ -224,84 +277,110 @@ export default function PropertyDetailScreen() {
               ))}
             </View>
           )}
-          
+
           <Text style={styles.title}>{property.title}</Text>
           <Text style={styles.address}>
             {property.address}, {property.city}, {property.state} {property.zipCode}
           </Text>
-          
+
           {distance !== null && (
             <View style={styles.distanceContainer}>
               <MapPin size={16} color={Colors.light.primary} />
               <Text style={styles.distanceText}>{formatDistance(distance)} from your location</Text>
             </View>
           )}
-          
+
           <View style={styles.featuresContainer}>
-            <PropertyFeature 
-              icon={<Bed size={20} color={Colors.light.primary} />}
-              label="Bedrooms"
-              value={property.bedrooms}
-            />
-            <PropertyFeature 
-              icon={<Bath size={20} color={Colors.light.primary} />}
-              label="Bathrooms"
-              value={property.bathrooms}
-            />
-            <PropertyFeature 
+            <PropertyFeature icon={<Bed size={20} color={Colors.light.primary} />} label="Bedrooms" value={property.bedrooms} />
+            <PropertyFeature icon={<Bath size={20} color={Colors.light.primary} />} label="Bathrooms" value={property.bathrooms} />
+            <PropertyFeature
               icon={<Square size={20} color={Colors.light.primary} />}
               label="Square Feet"
               value={property.squareFeet.toLocaleString()}
             />
-            <PropertyFeature 
-              icon={<Calendar size={20} color={Colors.light.primary} />}
-              label="Year Built"
-              value={property.yearBuilt}
-            />
+            <PropertyFeature icon={<Calendar size={20} color={Colors.light.primary} />} label="Year Built" value={property.yearBuilt} />
           </View>
-          
+
+          {property.type === 'landed' && property.landDetails && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Land Size</Text>
+              <Text style={styles.description}>
+                {property.landDetails.quantity} {property.landDetails.unit}
+                {property.landDetails.quantity > 1 ? 's' : ''}
+              </Text>
+            </View>
+          )}
+
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Description</Text>
             <Text style={styles.description}>{property.description}</Text>
           </View>
-          
+
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Property Details</Text>
+            <Text style={styles.sectionTitle}>Location Map</Text>
+            {Platform.OS === 'web' ? (
+              <Text style={styles.description}>
+                Coordinates: {property.latitude.toFixed(6)}, {property.longitude.toFixed(6)}
+              </Text>
+            ) : (
+              <MapView
+                provider={mapProvider}
+                style={styles.map}
+                region={{
+                  latitude: property.latitude,
+                  longitude: property.longitude,
+                  latitudeDelta: 0.02,
+                  longitudeDelta: 0.02,
+                }}
+              >
+                <Marker coordinate={{ latitude: property.latitude, longitude: property.longitude }} title={property.title} />
+              </MapView>
+            )}
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Facilities Nearby</Text>
+            {property.nearbyFacilities && property.nearbyFacilities.length > 0 ? (
+              property.nearbyFacilities.map((facility) => (
+                <View key={facility.key} style={styles.facilityRow}>
+                  <Text style={styles.facilityName}>{facility.label}</Text>
+                  <Text style={styles.facilityDistance}>{facility.distanceKm.toFixed(2)} km</Text>
+                </View>
+              ))
+            ) : (
+              <Text style={styles.description}>
+                Facilities distance is not available yet. Add EXPO_PUBLIC_GOOGLE_MAPS_API_KEY in your environment to auto-fetch.
+              </Text>
+            )}
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Lister Profile</Text>
             <View style={styles.detailsGrid}>
               <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Property Type</Text>
-                <Text style={styles.detailValue}>
-                  {property.type.charAt(0).toUpperCase() + property.type.slice(1)}
-                </Text>
+                <Text style={styles.detailLabel}>Name</Text>
+                <Text style={styles.detailValue}>{property.lister?.name || 'Property Owner'}</Text>
               </View>
               <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Year Built</Text>
-                <Text style={styles.detailValue}>{property.yearBuilt}</Text>
+                <Text style={styles.detailLabel}>Company</Text>
+                <Text style={styles.detailValue}>{property.lister?.companyName || 'Not provided'}</Text>
               </View>
               <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Listing Type</Text>
-                <Text style={styles.detailValue}>{getListingTypeLabel()}</Text>
+                <Text style={styles.detailLabel}>Contact</Text>
+                <Text style={styles.detailValue}>{property.lister?.phone || 'Not provided'}</Text>
               </View>
-              {property.paymentFrequency && (
-                <View style={styles.detailItem}>
-                  <Text style={styles.detailLabel}>Default Payment</Text>
-                  <Text style={styles.detailValue}>
-                    {property.paymentFrequency.rent ? 
-                      (property.paymentFrequency.rent === 'monthly' ? 'Monthly' : 'Yearly') : 
-                      property.paymentFrequency["short-let"] === 'daily' ? 'Daily' :
-                      property.paymentFrequency["short-let"] === 'weekly' ? 'Weekly' : 'Monthly'
-                    }
-                  </Text>
-                </View>
-              )}
+              <View style={styles.detailItem}>
+                <Text style={styles.detailLabel}>Address</Text>
+                <Text style={styles.detailValue}>{property.lister?.address || 'Not provided'}</Text>
+              </View>
             </View>
           </View>
-          
+
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Amenities</Text>
             <View style={styles.amenitiesContainer}>
-              {property.amenities.map((amenity, index) => (
-                <View key={index} style={styles.amenityTag}>
+              {property.amenities.map((amenity) => (
+                <View key={amenity} style={styles.amenityTag}>
                   <Text style={styles.amenityText}>{amenity}</Text>
                 </View>
               ))}
@@ -309,15 +388,15 @@ export default function PropertyDetailScreen() {
           </View>
         </View>
       </ScrollView>
-      
+
       <View style={styles.footer}>
         <Pressable style={styles.messageButton} onPress={handleMessagePress}>
           <MessageCircle size={22} color={Colors.light.primary} />
-          <Text style={styles.messageButtonText}>Message</Text>
+          <Text style={styles.messageButtonText}>WhatsApp</Text>
         </Pressable>
         <Pressable style={styles.callButton} onPress={handleContactPress}>
           <Phone size={22} color="white" />
-          <Text style={styles.callButtonText}>Call Agent</Text>
+          <Text style={styles.callButtonText}>Call Lister</Text>
         </Pressable>
       </View>
     </>
@@ -339,18 +418,36 @@ const styles = StyleSheet.create({
   contentContainer: {
     padding: 20,
   },
+  badgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
   listingTypeContainer: {
     backgroundColor: Colors.light.primary,
     alignSelf: 'flex-start',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 4,
-    marginBottom: 8,
   },
   listingTypeText: {
     color: 'white',
     fontWeight: '600',
     fontSize: 12,
+  },
+  statusBadge: {
+    backgroundColor: Colors.light.tag,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  statusText: {
+    color: Colors.light.text,
+    fontSize: 12,
+    fontWeight: '600',
   },
   price: {
     fontSize: 24,
@@ -418,15 +515,11 @@ const styles = StyleSheet.create({
   },
   featuresContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 16,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: Colors.light.border,
-    marginBottom: 24,
+    flexWrap: 'wrap',
+    marginBottom: 8,
   },
   section: {
-    marginBottom: 24,
+    marginTop: 20,
   },
   sectionTitle: {
     fontSize: 18,
@@ -435,26 +528,33 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   description: {
-    fontSize: 16,
-    lineHeight: 24,
-    color: Colors.light.text,
+    fontSize: 15,
+    color: Colors.light.subtext,
+    lineHeight: 22,
+  },
+  map: {
+    height: 220,
+    borderRadius: 12,
   },
   detailsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    gap: 12,
   },
   detailItem: {
-    width: '50%',
-    marginBottom: 16,
+    backgroundColor: Colors.light.card,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: 10,
+    padding: 12,
   },
   detailLabel: {
-    fontSize: 14,
+    fontSize: 12,
     color: Colors.light.subtext,
     marginBottom: 4,
   },
   detailValue: {
-    fontSize: 16,
+    fontSize: 15,
     color: Colors.light.text,
+    fontWeight: '500',
   },
   amenitiesContainer: {
     flexDirection: 'row',
@@ -463,15 +563,37 @@ const styles = StyleSheet.create({
   },
   amenityTag: {
     backgroundColor: Colors.light.tag,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
     borderRadius: 6,
-    marginHorizontal: 4,
-    marginBottom: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    margin: 4,
   },
   amenityText: {
-    fontSize: 14,
     color: Colors.light.tagText,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  facilityRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: Colors.light.card,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+  facilityName: {
+    color: Colors.light.text,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  facilityDistance: {
+    color: Colors.light.primary,
+    fontSize: 14,
+    fontWeight: '600',
   },
   footer: {
     flexDirection: 'row',
@@ -485,54 +607,54 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    marginRight: 8,
-    borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.light.primary,
+    borderRadius: 8,
+    paddingVertical: 12,
+    marginRight: 8,
   },
   messageButtonText: {
-    marginLeft: 8,
-    fontSize: 16,
-    fontWeight: '500',
     color: Colors.light.primary,
+    fontWeight: '600',
+    fontSize: 16,
+    marginLeft: 8,
   },
   callButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 8,
     backgroundColor: Colors.light.primary,
+    borderRadius: 8,
+    paddingVertical: 12,
+    marginLeft: 8,
   },
   callButtonText: {
-    marginLeft: 8,
-    fontSize: 16,
-    fontWeight: '500',
     color: 'white',
+    fontWeight: '600',
+    fontSize: 16,
+    marginLeft: 8,
   },
   notFoundContainer: {
     flex: 1,
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.light.background,
     padding: 20,
   },
   notFoundText: {
     fontSize: 18,
-    fontWeight: '600',
     color: Colors.light.text,
     marginBottom: 16,
   },
   backButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
     backgroundColor: Colors.light.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
     borderRadius: 8,
   },
   backButtonText: {
     color: 'white',
-    fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
   },
 });
