@@ -1,18 +1,40 @@
 import React from 'react';
-import { StyleSheet, View, Text, ScrollView, Pressable } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, Pressable, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { Filter, MapPin, Plus } from 'lucide-react-native';
 import { usePropertyStore } from '@/hooks/usePropertyStore';
+import { useAuthStore } from '@/hooks/useAuthStore';
 import PropertyCard from '@/components/PropertyCard';
 import SearchBar from '@/components/SearchBar';
 import FilterModal from '@/components/FilterModal';
 import Colors from '@/constants/colors';
+import { fetchAllPropertiesFromSupabase } from '@/lib/propertyApi';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { properties, filter, setFilter, getFeaturedProperties } = usePropertyStore();
+  const { user, isAuthenticated } = useAuthStore();
+  const { properties, filter, setFilter, getFeaturedProperties, setProperties } = usePropertyStore();
   const [searchQuery, setSearchQuery] = React.useState('');
   const [filterModalVisible, setFilterModalVisible] = React.useState(false);
+
+  // Reload properties when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      const loadProperties = async () => {
+        try {
+          const remoteProperties = await fetchAllPropertiesFromSupabase();
+          if (remoteProperties.length > 0) {
+            setProperties(remoteProperties);
+          }
+        } catch (error) {
+          console.error('Failed to load properties:', error);
+        }
+      };
+
+      loadProperties();
+    }, [setProperties])
+  );
   
   const featuredProperties = getFeaturedProperties();
   
@@ -35,6 +57,23 @@ export default function HomeScreen() {
   };
   
   const handleAddProperty = () => {
+    if (!isAuthenticated || !user) {
+      Alert.alert('Business Users Only', 'Only business users can add the property. Please sign in first.');
+      return;
+    }
+
+    if (!user.companyName) {
+      Alert.alert(
+        'Business Profile Required',
+        'Only business users can add the property. Please complete your Business Profile first.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Profile', onPress: () => router.push('/business-profile' as any) },
+        ]
+      );
+      return;
+    }
+
     router.push('/add-property' as any);
   };
 

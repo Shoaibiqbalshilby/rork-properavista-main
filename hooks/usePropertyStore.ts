@@ -21,6 +21,8 @@ interface PropertyState {
   updateProperty: (id: string, updates: Partial<Omit<Property, 'id'>>) => void;
   updatePropertyFacilities: (id: string, facilities: NearbyFacility[]) => void;
   getPropertiesByUser: (userId: string) => Property[];
+  setProperties: (properties: Property[]) => void;
+  upsertProperty: (property: Property) => void;
 }
 
 export const usePropertyStore = create<PropertyState>()(
@@ -160,7 +162,22 @@ export const usePropertyStore = create<PropertyState>()(
 
       getPropertiesByUser: (userId) => {
         return get().properties.filter((property) => property.listedByUserId === userId);
-      }
+      },
+
+      setProperties: (properties) => set({ properties }),
+
+      upsertProperty: (property) => set((state) => {
+        const existingIndex = state.properties.findIndex((item) => item.id === property.id);
+
+        if (existingIndex === -1) {
+          return { properties: [property, ...state.properties] };
+        }
+
+        const nextProperties = [...state.properties];
+        nextProperties[existingIndex] = property;
+
+        return { properties: nextProperties };
+      }),
     }),
     {
       name: 'property-storage',

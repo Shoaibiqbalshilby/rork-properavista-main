@@ -9,22 +9,25 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  ActivityIndicator
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter, Link } from 'expo-router';
-import { Eye, EyeOff, Mail, Lock, User } from 'lucide-react-native';
+import { Eye, EyeOff, Mail, Lock, User, Phone } from 'lucide-react-native';
 import { useAuthStore } from '@/hooks/useAuthStore';
 import Colors from '@/constants/colors';
 
 export default function SignupScreen() {
   const router = useRouter();
-  const { signup, isLoading, error } = useAuthStore();
+  const { signup, isLoading, error, clearError } = useAuthStore();
   
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [phone, setPhone] = useState('');
+  const [whatsapp, setWhatsapp] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   
@@ -32,6 +35,7 @@ export default function SignupScreen() {
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [confirmPasswordError, setConfirmPasswordError] = useState('');
+  const [phoneError, setPhoneError] = useState('');
   
   const validateName = () => {
     if (!name) {
@@ -86,16 +90,36 @@ export default function SignupScreen() {
     return true;
   };
   
+  const validatePhone = () => {
+    if (!phone) {
+      setPhoneError('Phone number is required');
+      return false;
+    }
+    const phoneRegex = /^(\+?234|0)[7-9][0-1]\d{8}$/;
+    if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
+      setPhoneError('Please enter a valid Nigerian phone number');
+      return false;
+    }
+    setPhoneError('');
+    return true;
+  };
+  
   const handleSignup = async () => {
+    clearError();
     const isNameValid = validateName();
     const isEmailValid = validateEmail();
     const isPasswordValid = validatePassword();
     const isConfirmPasswordValid = validateConfirmPassword();
+    const isPhoneValid = validatePhone();
     
-    if (isNameValid && isEmailValid && isPasswordValid && isConfirmPasswordValid) {
-      const success = await signup(name, email, password);
+    if (isNameValid && isEmailValid && isPasswordValid && isConfirmPasswordValid && isPhoneValid) {
+      const success = await signup(name, email, password, phone, whatsapp || phone);
       if (success) {
-        router.replace('/');
+        Alert.alert(
+          'Success!',
+          'Your account has been created successfully. You are now logged in.',
+          [{ text: 'OK', onPress: () => router.replace('/') }]
+        );
       }
     }
   };
@@ -218,7 +242,39 @@ export default function SignupScreen() {
             </View>
             {confirmPasswordError ? <Text style={styles.errorText}>{confirmPasswordError}</Text> : null}
           </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Phone Number</Text>
+            <View style={[styles.inputContainer, phoneError ? styles.inputError : null]}>
+              <Phone size={20} color={Colors.light.subtext} style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                value={phone}
+                onChangeText={setPhone}
+                placeholder="e.g. 08012345678"
+                placeholderTextColor={Colors.light.subtext}
+                keyboardType="phone-pad"
+                onBlur={validatePhone}
+              />
+            </View>
+            {phoneError ? <Text style={styles.errorText}>{phoneError}</Text> : null}
+          </View>
           
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>WhatsApp Number (Optional)</Text>
+            <View style={styles.inputContainer}>
+              <Phone size={20} color={Colors.light.subtext} style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                value={whatsapp}
+                onChangeText={setWhatsapp}
+                placeholder="e.g. 08087654321"
+                placeholderTextColor={Colors.light.subtext}
+                keyboardType="phone-pad"
+              />
+            </View>
+          </View>
+
           <Pressable 
             style={styles.signupButton} 
             onPress={handleSignup}

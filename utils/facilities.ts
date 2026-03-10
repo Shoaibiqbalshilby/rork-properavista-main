@@ -1,5 +1,6 @@
 import { NearbyFacility } from '@/types/property';
 import { calculateDistance } from '@/utils/distance';
+import { GOOGLE_MAPS_API_KEY } from '@/constants/maps';
 
 const facilityTypes = [
   { key: 'hospital', label: 'Hospital' },
@@ -14,7 +15,7 @@ export async function getNearbyFacilityDistances(
   latitude: number,
   longitude: number
 ): Promise<NearbyFacility[]> {
-  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+  const apiKey = GOOGLE_MAPS_API_KEY;
 
   if (!apiKey) {
     return [];

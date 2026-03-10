@@ -17,7 +17,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.properavista",
       "config": {
-        "googleMapsApiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+        "googleMapsApiKey": "AIzaSyAwz9goP51ERpdNhzIVksk8upwRh9MT7S0"
       },
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Allow $(PRODUCT_NAME) to access your photos",
@@ -34,7 +34,7 @@
     "android": {
       "config": {
         "googleMaps": {
-          "apiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+          "apiKey": "AIzaSyAwz9goP51ERpdNhzIVksk8upwRh9MT7S0"
         }
       },
       "adaptiveIcon": {

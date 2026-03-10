@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, View, Text, Platform } from 'react-native';
+import { StyleSheet, View, Text, Platform, UIManager, Image } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useLocationStore } from '@/hooks/useLocationStore';
 import { usePropertyStore } from '@/hooks/usePropertyStore';
 import { Property } from '@/types/property';
 import Colors from '@/constants/colors';
 import { formatDistance, calculateDistance } from '@/utils/distance';
+import { getStaticMapUrl, hasGoogleMapsApiKey } from '@/constants/maps';
 
-const mapProvider = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ? PROVIDER_GOOGLE : undefined;
+const mapProvider = Platform.OS === 'android' && hasGoogleMapsApiKey ? PROVIDER_GOOGLE : undefined;
+const hasNativeMapView = Platform.OS !== 'web' && !!UIManager.getViewManagerConfig?.('AIRMap');
 
 export default function PropertyMapView() {
   const { userLocation, permissionStatus, requestLocationPermission, getCurrentLocation, isLoading, error } = useLocationStore();
@@ -36,16 +38,16 @@ export default function PropertyMapView() {
       return {
         latitude: userLocation.latitude,
         longitude: userLocation.longitude,
-        latitudeDelta: 0.15,
-        longitudeDelta: 0.15,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
       };
     }
 
     return {
       latitude: 6.5244,
       longitude: 3.3792,
-      latitudeDelta: 0.4,
-      longitudeDelta: 0.4,
+      latitudeDelta: 0.02,
+      longitudeDelta: 0.02,
     };
   }, [userLocation]);
 
@@ -84,26 +86,39 @@ export default function PropertyMapView() {
 
   return (
     <View style={styles.container}>
-      <MapView provider={mapProvider} style={styles.map} initialRegion={initialRegion} region={initialRegion}>
-        {userLocation && (
-          <Marker coordinate={userLocation} title="You are here" pinColor={Colors.light.primary} />
-        )}
+      {hasNativeMapView ? (
+        <MapView provider={mapProvider} style={styles.map} initialRegion={initialRegion} region={initialRegion}>
+          {userLocation && (
+            <Marker coordinate={userLocation} title="You are here" pinColor={Colors.light.primary} />
+          )}
 
-        {nearbyProperties.map((property) => {
-          const distance = userLocation
-            ? calculateDistance(userLocation.latitude, userLocation.longitude, property.latitude, property.longitude)
-            : null;
+          {nearbyProperties.map((property) => {
+            const distance = userLocation
+              ? calculateDistance(userLocation.latitude, userLocation.longitude, property.latitude, property.longitude)
+              : null;
 
-          return (
-            <Marker
-              key={property.id}
-              coordinate={{ latitude: property.latitude, longitude: property.longitude }}
-              title={property.title}
-              description={distance !== null ? `${formatDistance(distance)} away` : property.address}
-            />
-          );
-        })}
-      </MapView>
+            return (
+              <Marker
+                key={property.id}
+                coordinate={{ latitude: property.latitude, longitude: property.longitude }}
+                title={property.title}
+                description={distance !== null ? `${formatDistance(distance)} away` : property.address}
+              />
+            );
+          })}
+        </MapView>
+      ) : (
+        <Image
+          source={{
+            uri: getStaticMapUrl({
+              latitude: initialRegion.latitude,
+              longitude: initialRegion.longitude,
+                zoom: 16,
+            }),
+          }}
+          style={styles.map}
+        />
+      )}
 
       <View style={styles.footerInfo}>
         <Text style={styles.propertiesText}>{nearbyProperties.length} properties found within 20km</Text>

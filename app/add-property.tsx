@@ -8,6 +8,9 @@ import {
   Pressable,
   Alert,
   Platform,
+  UIManager,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
@@ -21,6 +24,10 @@ import StateSelector from '@/components/StateSelector';
 import CitySelector from '@/components/CitySelector';
 import { getNearbyFacilityDistances } from '@/utils/facilities';
 import { LandUnit, ListingStatus, Property } from '@/types/property';
+import { getStaticMapUrl, hasGoogleMapsApiKey } from '@/constants/maps';
+import { createPropertyInSupabase, updatePropertyInSupabase } from '@/lib/propertyApi';
+import { uploadPropertyImages } from '@/lib/storage';
+import { testSupabaseConnection } from '@/lib/supabase';
 
 const propertyTypes = [
   { label: 'House', value: 'house' },
@@ -84,13 +91,14 @@ const commonAmenities = [
   'Mountain View',
 ];
 
-const mapProvider = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ? PROVIDER_GOOGLE : undefined;
+const mapProvider = Platform.OS === 'android' && hasGoogleMapsApiKey ? PROVIDER_GOOGLE : undefined;
+const hasNativeMapView = Platform.OS !== 'web' && !!UIManager.getViewManagerConfig?.('AIRMap');
 
 export default function AddPropertyScreen() {
   const router = useRouter();
   const { editId } = useLocalSearchParams<{ editId?: string }>();
   const { user } = useAuthStore();
-  const { properties, addProperty, updateProperty, updatePropertyFacilities } = usePropertyStore();
+  const { properties, upsertProperty } = usePropertyStore();
 
   const editingProperty = useMemo(
     () => properties.find((property) => property.id === editId),
@@ -122,6 +130,30 @@ export default function AddPropertyScreen() {
   const [latitude, setLatitude] = useState('6.5244');
   const [longitude, setLongitude] = useState('3.3792');
   const [submitting, setSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+
+  // Test Supabase connection on mount
+  useEffect(() => {
+    const checkConnection = async () => {
+      const result = await testSupabaseConnection();
+      if (!result.success) {
+        console.error('[AddProperty] Supabase connection test failed:', result.error);
+        Alert.alert(
+          'Database Setup Required',
+          `${result.error}\n\nPlease run the SQL schema in your Supabase SQL Editor before adding properties.`,
+          [
+            { text: 'Cancel', onPress: () => router.back() },
+            { text: 'Continue Anyway', style: 'cancel' },
+          ]
+        );
+      } else {
+        console.log('[AddProperty] Supabase connection test passed ✓');
+      }
+    };
+
+    checkConnection();
+  }, []);
 
   useEffect(() => {
     if (!editingProperty) return;
@@ -237,7 +269,7 @@ export default function AddPropertyScreen() {
     return null;
   };
 
-  const buildPropertyPayload = (): Omit<Property, 'id'> => {
+  const buildPropertyPayload = (uploadedImages: string[]): Omit<Property, 'id'> => {
     const paymentFrequencyObj = !paymentFrequency
       ? undefined
       : listingType === 'rent'
@@ -262,7 +294,7 @@ export default function AddPropertyScreen() {
       listingType: listingType as Property['listingType'],
       listingStatus,
       amenities: selectedAmenities,
-      images,
+      images: uploadedImages,
       latitude: Number(latitude),
       longitude: Number(longitude),
       isFeatured: false,
@@ -275,12 +307,12 @@ export default function AddPropertyScreen() {
         : undefined,
       listedByUserId: user?.id,
       lister: {
-        name: user?.name || 'Property Owner',
-        companyName: user?.companyName,
-        description: user?.description,
-        phone: user?.phone,
-        whatsapp: user?.whatsapp || user?.phone,
-        address: user?.address,
+        name: user?.name || user?.email || 'Property Owner',
+        companyName: user?.companyName || '',
+        description: user?.description || '',
+        phone: user?.phone || '',
+        whatsapp: user?.whatsapp || user?.phone || '',
+        address: user?.address || '',
       },
       nearbyFacilities: editingProperty?.nearbyFacilities || [],
     };
@@ -288,15 +320,21 @@ export default function AddPropertyScreen() {
 
   const updateFacilities = async (propertyId: string) => {
     const facilities = await getNearbyFacilityDistances(Number(latitude), Number(longitude));
-    if (facilities.length > 0) {
-      updatePropertyFacilities(propertyId, facilities);
-    }
+    return facilities;
   };
 
   const handleSubmit = async () => {
     if (!user) {
       Alert.alert('Sign In Required', 'Please sign in before listing or editing properties.');
       router.push('/login');
+      return;
+    }
+
+    if (!user.companyName) {
+      Alert.alert(
+        'Business Profile Required',
+        'Only business users can add the property. Please complete your Business Profile first.'
+      );
       return;
     }
 
@@ -311,26 +349,80 @@ export default function AddPropertyScreen() {
       return;
     }
 
-    const payload = buildPropertyPayload();
-
     try {
       setSubmitting(true);
-      let propertyId = editingProperty?.id;
+      console.log('[AddProperty] Starting submission for user:', user.id);
+      console.log('[AddProperty] User details:', { userId: user.id, hasCompany: !!user.companyName });
+      
+      // Try to upload images, but continue even if upload fails
+      let uploadedImages = images;
+      console.log('[AddProperty] Images to upload:', images.length);
+      
+      try {
+        if (images.length > 0) {
+          setShowUploadModal(true);
+          setUploadProgress(0);
+          console.log('[AddProperty] Starting image upload...');
+          
+          uploadedImages = await uploadPropertyImages(images, user.id, (progress) => {
+            setUploadProgress(progress);
+            console.log('[AddProperty] Upload progress:', progress + '%');
+          });
+          
+          console.log('[AddProperty] Images uploaded:', uploadedImages);
+          setShowUploadModal(false);
+        }
+      } catch (error) {
+        console.error('[AddProperty] Image upload failed, continuing with local URIs:', error);
+        setShowUploadModal(false);
+      }
+      
+      console.log('[AddProperty] Building property payload...');
+      const payload = buildPropertyPayload(uploadedImages);
+      console.log('[AddProperty] Payload created:', { title: payload.title, type: payload.type });
+      
+      let savedProperty: Property;
 
       if (editingProperty) {
-        updateProperty(editingProperty.id, payload);
+        console.log('[AddProperty] Updating property:', editingProperty.id);
+        savedProperty = await updatePropertyInSupabase(editingProperty.id, payload);
       } else {
-        propertyId = addProperty(payload);
+        console.log('[AddProperty] Creating new property...');
+        savedProperty = await createPropertyInSupabase(payload);
       }
 
-      if (propertyId) {
-        await updateFacilities(propertyId);
+      console.log('[AddProperty] Property saved:', savedProperty.id);
+
+      try {
+        console.log('[AddProperty] Updating facilities...');
+        const facilities = await updateFacilities(savedProperty.id);
+        if (facilities.length > 0) {
+          savedProperty = await updatePropertyInSupabase(savedProperty.id, {
+            nearbyFacilities: facilities,
+          });
+        }
+      } catch (facilitiesError) {
+        console.warn('[AddProperty] Facilities update failed, continuing with saved property:', facilitiesError);
       }
 
+      console.log('[AddProperty] Upserting property to store...');
+      upsertProperty(savedProperty);
+
+      console.log('[AddProperty] Success!');
       Alert.alert(
         'Success',
         editingProperty ? 'Property updated successfully!' : 'Property added successfully!',
         [{ text: 'OK', onPress: () => router.push('/' as any) }]
+      );
+    } catch (error: any) {
+      console.error('[AddProperty] Submission error:', error);
+      console.error('[AddProperty] Error message:', error?.message);
+      console.error('[AddProperty] Error stack:', error?.stack);
+      
+      const errorMessage = error?.message || 'Unknown error occurred';
+      Alert.alert(
+        'Error',
+        `Failed to ${editingProperty ? 'update' : 'add'} property:\n\n${errorMessage}\n\nPlease ensure you've run the SQL schema in Supabase and check your internet connection.`
       );
     } finally {
       setSubmitting(false);
@@ -565,31 +657,50 @@ export default function AddPropertyScreen() {
 
           {Platform.OS !== 'web' && (
             <View style={styles.mapContainer}>
-              <Text style={styles.mapInstruction}>Tap map to set exact location</Text>
-              <MapView
-                provider={mapProvider}
-                style={styles.map}
-                onPress={onMapPress}
-                initialRegion={{
-                  latitude: Number(latitude) || 6.5244,
-                  longitude: Number(longitude) || 3.3792,
-                  latitudeDelta: 0.05,
-                  longitudeDelta: 0.05,
-                }}
-                region={{
-                  latitude: Number(latitude) || 6.5244,
-                  longitude: Number(longitude) || 3.3792,
-                  latitudeDelta: 0.05,
-                  longitudeDelta: 0.05,
-                }}
-              >
-                <Marker
-                  coordinate={{
-                    latitude: Number(latitude) || 6.5244,
-                    longitude: Number(longitude) || 3.3792,
-                  }}
-                />
-              </MapView>
+              {hasNativeMapView ? (
+                <>
+                  <Text style={styles.mapInstruction}>Tap map to set exact location</Text>
+                  <MapView
+                    provider={mapProvider}
+                    style={styles.map}
+                    onPress={onMapPress}
+                    initialRegion={{
+                      latitude: Number(latitude) || 6.5244,
+                      longitude: Number(longitude) || 3.3792,
+                      latitudeDelta: 0.05,
+                      longitudeDelta: 0.05,
+                    }}
+                    region={{
+                      latitude: Number(latitude) || 6.5244,
+                      longitude: Number(longitude) || 3.3792,
+                      latitudeDelta: 0.05,
+                      longitudeDelta: 0.05,
+                    }}
+                  >
+                    <Marker
+                      coordinate={{
+                        latitude: Number(latitude) || 6.5244,
+                        longitude: Number(longitude) || 3.3792,
+                      }}
+                    />
+                  </MapView>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.mapInstruction}>Map fallback preview is shown below</Text>
+                  <Image
+                    source={{
+                      uri: getStaticMapUrl({
+                        latitude: Number(latitude) || 6.5244,
+                        longitude: Number(longitude) || 3.3792,
+                        zoom: 13,
+                      }),
+                    }}
+                    style={styles.map}
+                    contentFit="cover"
+                  />
+                </>
+              )}
             </View>
           )}
 
@@ -716,6 +827,36 @@ export default function AddPropertyScreen() {
           </Pressable>
         </View>
       </ScrollView>
+
+      {/* Image Upload Progress Modal */}
+      <Modal
+        visible={showUploadModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+      >
+        <View style={styles.uploadModalOverlay}>
+          <View style={styles.uploadModalContent}>
+            <ActivityIndicator size="large" color={Colors.light.primary} />
+            <Text style={styles.uploadModalTitle}>Uploading Images</Text>
+            <Text style={styles.uploadModalPercent}>{uploadProgress}%</Text>
+            
+            {/* Progress Bar */}
+            <View style={styles.progressBarContainer}>
+              <View 
+                style={[
+                  styles.progressBarFill, 
+                  { width: `${uploadProgress}%` }
+                ]} 
+              />
+            </View>
+            
+            <Text style={styles.uploadModalSubtext}>
+              Please wait while your images are being uploaded...
+            </Text>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -893,5 +1034,55 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
+  },
+  uploadModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  uploadModalContent: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 32,
+    alignItems: 'center',
+    minWidth: 280,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  uploadModalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: Colors.light.text,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  uploadModalPercent: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    color: Colors.light.primary,
+    marginVertical: 8,
+  },
+  progressBarContainer: {
+    width: '100%',
+    height: 8,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginVertical: 16,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: Colors.light.primary,
+    borderRadius: 4,
+  },
+  uploadModalSubtext: {
+    fontSize: 14,
+    color: Colors.light.subtext,
+    textAlign: 'center',
+    marginTop: 8,
   },
 });

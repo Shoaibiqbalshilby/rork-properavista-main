@@ -5,12 +5,31 @@ import { usePropertyStore } from '@/hooks/usePropertyStore';
 import { useAuthStore } from '@/hooks/useAuthStore';
 import PropertyCard from '@/components/PropertyCard';
 import Colors from '@/constants/colors';
+import { fetchUserPropertiesFromSupabase } from '@/lib/propertyApi';
+import { Property } from '@/types/property';
 
 export default function MyPropertiesScreen() {
   const { user } = useAuthStore();
   const { getPropertiesByUser } = usePropertyStore();
+  const [properties, setProperties] = React.useState<Property[]>([]);
 
-  const properties = user ? getPropertiesByUser(user.id) : [];
+  React.useEffect(() => {
+    setProperties(user ? getPropertiesByUser(user.id) : []);
+  }, [user, getPropertiesByUser]);
+
+  React.useEffect(() => {
+    const loadMyProperties = async () => {
+      if (!user) return;
+
+      try {
+        const userProperties = await fetchUserPropertiesFromSupabase(user.id);
+        setProperties(userProperties);
+      } catch {
+      }
+    };
+
+    loadMyProperties();
+  }, [user]);
 
   return (
     <View style={styles.container}>

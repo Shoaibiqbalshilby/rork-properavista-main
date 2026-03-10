@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -8,6 +8,8 @@ import {
   Linking,
   Platform,
   Alert,
+  UIManager,
+  Image,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import {
@@ -31,13 +33,16 @@ import PropertyImageGallery from '@/components/PropertyImageGallery';
 import Colors from '@/constants/colors';
 import { calculateDistance, formatDistance } from '@/utils/distance';
 import { normalizePhone, whatsappUrl } from '@/utils/contact';
+import { getNearbyFacilityDistances } from '@/utils/facilities';
+import { getStaticMapUrl, hasGoogleMapsApiKey } from '@/constants/maps';
 
-const mapProvider = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ? PROVIDER_GOOGLE : undefined;
+const mapProvider = Platform.OS === 'android' && hasGoogleMapsApiKey ? PROVIDER_GOOGLE : undefined;
+const hasNativeMapView = Platform.OS !== 'web' && !!UIManager.getViewManagerConfig?.('AIRMap');
 
 export default function PropertyDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { properties, favorites, toggleFavorite } = usePropertyStore();
+  const { properties, favorites, toggleFavorite, updatePropertyFacilities } = usePropertyStore();
   const { userLocation } = useLocationStore();
   const { user } = useAuthStore();
 
@@ -53,6 +58,38 @@ export default function PropertyDetailScreen() {
     userLocation && property
       ? calculateDistance(userLocation.latitude, userLocation.longitude, property.latitude, property.longitude)
       : null;
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadFacilities = async () => {
+      if (!property || !hasGoogleMapsApiKey) {
+        return;
+      }
+
+      if ((property.nearbyFacilities?.length || 0) > 0) {
+        return;
+      }
+
+      const facilities = await getNearbyFacilityDistances(property.latitude, property.longitude);
+
+      if (isMounted && facilities.length > 0) {
+        updatePropertyFacilities(property.id, facilities);
+      }
+    };
+
+    loadFacilities();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [
+    property?.id,
+    property?.latitude,
+    property?.longitude,
+    property?.nearbyFacilities?.length,
+    updatePropertyFacilities,
+  ]);
 
   if (!property) {
     return (
@@ -322,7 +359,7 @@ export default function PropertyDetailScreen() {
               <Text style={styles.description}>
                 Coordinates: {property.latitude.toFixed(6)}, {property.longitude.toFixed(6)}
               </Text>
-            ) : (
+            ) : hasNativeMapView ? (
               <MapView
                 provider={mapProvider}
                 style={styles.map}
@@ -335,6 +372,16 @@ export default function PropertyDetailScreen() {
               >
                 <Marker coordinate={{ latitude: property.latitude, longitude: property.longitude }} title={property.title} />
               </MapView>
+            ) : (
+              <Image
+                source={{
+                  uri: getStaticMapUrl({
+                    latitude: property.latitude,
+                    longitude: property.longitude,
+                  }),
+                }}
+                style={styles.map}
+              />
             )}
           </View>
 
@@ -349,7 +396,7 @@ export default function PropertyDetailScreen() {
               ))
             ) : (
               <Text style={styles.description}>
-                Facilities distance is not available yet. Add EXPO_PUBLIC_GOOGLE_MAPS_API_KEY in your environment to auto-fetch.
+                Facilities distance is not available right now. Please verify Google Maps Places API is enabled and try again.
               </Text>
             )}
           </View>

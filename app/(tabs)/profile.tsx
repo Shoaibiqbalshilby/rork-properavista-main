@@ -1,6 +1,7 @@
 import React from 'react';
-import { StyleSheet, View, Text, Pressable, ScrollView, Alert, TextInput } from 'react-native';
+import { StyleSheet, View, Text, Pressable, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { 
   User, 
@@ -12,28 +13,18 @@ import {
   Home,
   Heart,
   MessageCircle,
-  Shield
+  Shield,
+  Building2
 } from 'lucide-react-native';
 import { useAuthStore } from '@/hooks/useAuthStore';
 import Colors from '@/constants/colors';
+import { uploadImageToBucket } from '@/lib/storage';
+import { supabaseClient } from '@/lib/supabase';
 
 export default function ProfileScreen() {
   const router = useRouter();
   const { user, isAuthenticated, logout, updateProfile } = useAuthStore();
-  const [companyName, setCompanyName] = React.useState('');
-  const [description, setDescription] = React.useState('');
-  const [phone, setPhone] = React.useState('');
-  const [whatsapp, setWhatsapp] = React.useState('');
-  const [address, setAddress] = React.useState('');
-
-  React.useEffect(() => {
-    if (!user) return;
-    setCompanyName(user.companyName || '');
-    setDescription(user.description || '');
-    setPhone(user.phone || '');
-    setWhatsapp(user.whatsapp || '');
-    setAddress(user.address || '');
-  }, [user]);
+  const [uploadingAvatar, setUploadingAvatar] = React.useState(false);
   
   const handleLogin = () => {
     router.push('/login' as any);
@@ -59,6 +50,42 @@ export default function ProfileScreen() {
     );
   };
   
+  const handleAvatarUpload = async () => {
+    if (!user) return;
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.85,
+      });
+
+      if (result.canceled || !result.assets?.length) {
+        return;
+      }
+
+      setUploadingAvatar(true);
+      const uploadedUrl = await uploadImageToBucket(result.assets[0].uri, 'avatar-images', user.id);
+
+      const { error } = await supabaseClient
+        .from('user_profiles')
+        .update({ avatar_url: uploadedUrl })
+        .eq('id', user.id);
+
+      if (error) {
+        Alert.alert('Upload Failed', error.message);
+        return;
+      }
+
+      updateProfile({ avatar: uploadedUrl });
+      Alert.alert('Success', 'Profile photo updated successfully.');
+    } catch (error) {
+      Alert.alert('Upload Failed', error instanceof Error ? error.message : 'Unable to upload image');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
   const accountMenuItems = [
     { icon: <Home size={22} color={Colors.light.text} />, title: 'My Properties', route: '/my-properties' },
     { icon: <Heart size={22} color={Colors.light.text} />, title: 'Saved Properties', route: '/favorites' },
@@ -66,6 +93,7 @@ export default function ProfileScreen() {
   ];
   
   const settingsMenuItems = [
+    { icon: <Building2 size={22} color={Colors.light.text} />, title: 'Business Profile', route: '/business-profile' },
     { icon: <Settings size={22} color={Colors.light.text} />, title: 'Settings', route: '/settings' },
     { icon: <Bell size={22} color={Colors.light.text} />, title: 'Notifications', route: '/notifications' },
     { icon: <Shield size={22} color={Colors.light.text} />, title: 'Privacy & Security', route: '/privacy' },
@@ -73,22 +101,14 @@ export default function ProfileScreen() {
     { icon: <LogOut size={22} color={Colors.light.error} />, title: 'Log Out', onPress: handleLogout, isDestructive: true },
   ];
 
-  const handleSaveProfile = () => {
-    updateProfile({
-      companyName,
-      description,
-      phone,
-      whatsapp,
-      address,
-    });
-
-    Alert.alert('Saved', 'Profile details updated successfully.');
-  };
-
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <View style={styles.profileImageContainer}>
+        <Pressable
+          style={styles.profileImageContainer}
+          onPress={isAuthenticated ? handleAvatarUpload : undefined}
+          disabled={uploadingAvatar}
+        >
           {isAuthenticated && user ? (
             <Image
               source={{ uri: user.avatar || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2070&q=80' }}
@@ -100,13 +120,21 @@ export default function ProfileScreen() {
               <User size={40} color={Colors.light.primary} />
             </View>
           )}
-        </View>
+          {uploadingAvatar ? (
+            <View style={styles.avatarLoadingOverlay}>
+              <ActivityIndicator color="white" />
+            </View>
+          ) : null}
+        </Pressable>
         
         {isAuthenticated && user ? (
           <>
             <Text style={styles.name}>{user.name}</Text>
             <Text style={styles.email}>{user.email}</Text>
-            
+            {user.phone ? <Text style={styles.metaText}>Phone: {user.phone}</Text> : null}
+            {user.whatsapp ? <Text style={styles.metaText}>WhatsApp: {user.whatsapp}</Text> : null}
+            <Text style={styles.avatarHint}>Tap profile picture to change</Text>
+
             <View style={styles.statsContainer}>
               <View style={styles.statItem}>
                 <Text style={styles.statValue}>0</Text>
@@ -142,75 +170,6 @@ export default function ProfileScreen() {
         )}
       </View>
       
-      {isAuthenticated && (
-        <View style={styles.menuSection}>
-          <Text style={styles.menuSectionTitle}>Business Profile</Text>
-          <View style={styles.profileForm}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Company Name</Text>
-              <TextInput
-                style={styles.input}
-                value={companyName}
-                onChangeText={setCompanyName}
-                placeholder="Enter company name"
-                placeholderTextColor={Colors.light.subtext}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Description</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                value={description}
-                onChangeText={setDescription}
-                placeholder="Tell clients about your company"
-                placeholderTextColor={Colors.light.subtext}
-                multiline
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Contact Phone</Text>
-              <TextInput
-                style={styles.input}
-                value={phone}
-                onChangeText={setPhone}
-                placeholder="e.g. +2348012345678"
-                placeholderTextColor={Colors.light.subtext}
-                keyboardType="phone-pad"
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>WhatsApp Number</Text>
-              <TextInput
-                style={styles.input}
-                value={whatsapp}
-                onChangeText={setWhatsapp}
-                placeholder="e.g. +2348012345678"
-                placeholderTextColor={Colors.light.subtext}
-                keyboardType="phone-pad"
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Address</Text>
-              <TextInput
-                style={styles.input}
-                value={address}
-                onChangeText={setAddress}
-                placeholder="Company address"
-                placeholderTextColor={Colors.light.subtext}
-              />
-            </View>
-
-            <Pressable style={styles.saveButton} onPress={handleSaveProfile}>
-              <Text style={styles.saveButtonText}>Save Profile</Text>
-            </Pressable>
-          </View>
-        </View>
-      )}
-
       {isAuthenticated && (
         <View style={styles.menuSection}>
           <Text style={styles.menuSectionTitle}>Account</Text>
@@ -290,6 +249,7 @@ const styles = StyleSheet.create({
   },
   profileImageContainer: {
     marginBottom: 16,
+    position: 'relative',
   },
   profileImage: {
     width: 100,
@@ -306,6 +266,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  avatarLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   name: {
     fontSize: 20,
     fontWeight: '600',
@@ -315,13 +288,23 @@ const styles = StyleSheet.create({
   email: {
     fontSize: 14,
     color: Colors.light.subtext,
-    marginBottom: 16,
+    marginBottom: 6,
+  },
+  metaText: {
+    fontSize: 13,
+    color: Colors.light.subtext,
+    marginBottom: 2,
+  },
+  avatarHint: {
+    fontSize: 12,
+    color: Colors.light.subtext,
+    marginTop: 6,
   },
   statsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '80%',
-    marginTop: 8,
+    marginTop: 12,
   },
   statItem: {
     alignItems: 'center',
@@ -355,49 +338,6 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: '500',
-  },
-  profileForm: {
-    marginHorizontal: 20,
-    padding: 16,
-    backgroundColor: Colors.light.card,
-    borderWidth: 1,
-    borderColor: Colors.light.border,
-    borderRadius: 12,
-  },
-  inputGroup: {
-    marginBottom: 12,
-  },
-  inputLabel: {
-    fontSize: 13,
-    color: Colors.light.text,
-    fontWeight: '500',
-    marginBottom: 6,
-  },
-  input: {
-    backgroundColor: Colors.light.background,
-    borderWidth: 1,
-    borderColor: Colors.light.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: Colors.light.text,
-  },
-  textArea: {
-    minHeight: 90,
-    textAlignVertical: 'top',
-  },
-  saveButton: {
-    marginTop: 8,
-    backgroundColor: Colors.light.primary,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  saveButtonText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 15,
   },
   menuSection: {
     marginTop: 24,
