@@ -18,6 +18,7 @@ export interface Property {
   latitude: number;
   longitude: number;
   listingType: 'sell' | 'rent' | 'short-let';
+  previewImages?: string[];
   paymentFrequency?: PaymentFrequency;
   listingStatus?: ListingStatus;
   landDetails?: LandDetails;

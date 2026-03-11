@@ -133,7 +133,14 @@ export default function PropertyDetailScreen() {
   };
 
   const handleMessagePress = async () => {
-    const message = `Hello, I am interested in your property: ${property.title}`;
+    const message = [
+      'Hello, I am interested in this property.',
+      '',
+      `Title: ${property.title}`,
+      `Price: ${formatPrice(adjustedPrice)}${selectedPaymentFrequency ? getPaymentFrequencyLabel(selectedPaymentFrequency) : ''}`,
+      `Type: ${getListingTypeLabel()}`,
+      `Location: ${property.address}, ${property.city}, ${property.state}`,
+    ].join('\n');
     const url = whatsappUrl(property.lister?.whatsapp || property.lister?.phone, message);
 
     if (!url) {
@@ -272,7 +279,7 @@ export default function PropertyDetailScreen() {
       />
 
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-        <PropertyImageGallery images={property.images} />
+        <PropertyImageGallery images={property.images} previewImages={property.previewImages} />
 
         <View style={styles.contentContainer}>
           <View style={styles.badgesRow}>

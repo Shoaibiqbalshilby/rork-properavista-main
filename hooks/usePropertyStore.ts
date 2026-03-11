@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NearbyFacility, Property, PropertyFilter } from '@/types/property';
 import { properties as mockProperties } from '@/mocks/properties';
 import { calculateDistance } from '@/utils/distance';
+import { prefetchPropertyImages } from '@/utils/property-images';
 
 interface PropertyState {
   properties: Property[];
@@ -133,6 +134,8 @@ export const usePropertyStore = create<PropertyState>()(
           properties: [...state.properties, newProperty]
         }));
 
+        void prefetchPropertyImages([newProperty]);
+
         return id;
       },
 
@@ -164,17 +167,41 @@ export const usePropertyStore = create<PropertyState>()(
         return get().properties.filter((property) => property.listedByUserId === userId);
       },
 
-      setProperties: (properties) => set({ properties }),
+      setProperties: (properties) => set((state) => {
+        const localOnlyProperties = state.properties.filter(
+          (existingProperty) => !properties.some((incomingProperty) => incomingProperty.id === existingProperty.id)
+        );
+
+        const mergedProperties = properties.map((incomingProperty) => {
+          const existingProperty = state.properties.find((property) => property.id === incomingProperty.id);
+          return existingProperty?.previewImages && !incomingProperty.previewImages
+            ? { ...incomingProperty, previewImages: existingProperty.previewImages }
+            : incomingProperty;
+        });
+
+        const nextProperties = [...mergedProperties, ...localOnlyProperties];
+
+        void prefetchPropertyImages(nextProperties);
+
+        return { properties: nextProperties };
+      }),
 
       upsertProperty: (property) => set((state) => {
         const existingIndex = state.properties.findIndex((item) => item.id === property.id);
 
+        const existingProperty = existingIndex === -1 ? null : state.properties[existingIndex];
+        const nextProperty = existingProperty?.previewImages && !property.previewImages
+          ? { ...property, previewImages: existingProperty.previewImages }
+          : property;
+
+        void prefetchPropertyImages([nextProperty]);
+
         if (existingIndex === -1) {
-          return { properties: [property, ...state.properties] };
+          return { properties: [nextProperty, ...state.properties] };
         }
 
         const nextProperties = [...state.properties];
-        nextProperties[existingIndex] = property;
+        nextProperties[existingIndex] = nextProperty;
 
         return { properties: nextProperties };
       }),

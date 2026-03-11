@@ -26,7 +26,7 @@ import { getNearbyFacilityDistances } from '@/utils/facilities';
 import { LandUnit, ListingStatus, Property } from '@/types/property';
 import { getStaticMapUrl, hasGoogleMapsApiKey } from '@/constants/maps';
 import { createPropertyInSupabase, updatePropertyInSupabase } from '@/lib/propertyApi';
-import { uploadPropertyImages } from '@/lib/storage';
+import { isRemoteImageUrl, uploadPropertyImages } from '@/lib/storage';
 import { testSupabaseConnection } from '@/lib/supabase';
 
 const propertyTypes = [
@@ -98,7 +98,7 @@ export default function AddPropertyScreen() {
   const router = useRouter();
   const { editId } = useLocalSearchParams<{ editId?: string }>();
   const { user } = useAuthStore();
-  const { properties, upsertProperty } = usePropertyStore();
+  const { properties, addProperty, updateProperty, updatePropertyFacilities, upsertProperty } = usePropertyStore();
 
   const editingProperty = useMemo(
     () => properties.find((property) => property.id === editId),
@@ -173,7 +173,7 @@ export default function AddPropertyScreen() {
     setListingType(editingProperty.listingType);
     setListingStatus(editingProperty.listingStatus || 'available');
     setSelectedAmenities(editingProperty.amenities || []);
-    setImages(editingProperty.images || []);
+    setImages(editingProperty.previewImages || editingProperty.images || []);
     setLatitude(String(editingProperty.latitude));
     setLongitude(String(editingProperty.longitude));
 
@@ -307,7 +307,7 @@ export default function AddPropertyScreen() {
         : undefined,
       listedByUserId: user?.id,
       lister: {
-        name: user?.name || user?.email || 'Property Owner',
+        name: user?.name || user?.email || 'Guest User',
         companyName: user?.companyName || '',
         description: user?.description || '',
         phone: user?.phone || '',
@@ -318,26 +318,14 @@ export default function AddPropertyScreen() {
     };
   };
 
+  const isGuestSubmission = !user?.id;
+
   const updateFacilities = async (propertyId: string) => {
     const facilities = await getNearbyFacilityDistances(Number(latitude), Number(longitude));
     return facilities;
   };
 
   const handleSubmit = async () => {
-    if (!user) {
-      Alert.alert('Sign In Required', 'Please sign in before listing or editing properties.');
-      router.push('/login');
-      return;
-    }
-
-    if (!user.companyName) {
-      Alert.alert(
-        'Business Profile Required',
-        'Only business users can add the property. Please complete your Business Profile first.'
-      );
-      return;
-    }
-
     if (isEditMode && !canEdit) {
       Alert.alert('Not Allowed', 'Only the original lister can edit this property.');
       return;
@@ -351,30 +339,47 @@ export default function AddPropertyScreen() {
 
     try {
       setSubmitting(true);
-      console.log('[AddProperty] Starting submission for user:', user.id);
-      console.log('[AddProperty] User details:', { userId: user.id, hasCompany: !!user.companyName });
+      console.log('[AddProperty] Starting submission for user:', user?.id || 'guest');
+      console.log('[AddProperty] User details:', { userId: user?.id || null, hasCompany: !!user?.companyName });
       
       // Try to upload images, but continue even if upload fails
-      let uploadedImages = images;
+      let uploadedImages: string[] = [];
+      let uploadFailureMessage = '';
       console.log('[AddProperty] Images to upload:', images.length);
       
       try {
-        if (images.length > 0) {
+        if (images.length > 0 && user?.id) {
           setShowUploadModal(true);
           setUploadProgress(0);
           console.log('[AddProperty] Starting image upload...');
           
-          uploadedImages = await uploadPropertyImages(images, user.id, (progress) => {
+          const allUploaded = await uploadPropertyImages(images, user.id, (progress) => {
             setUploadProgress(progress);
             console.log('[AddProperty] Upload progress:', progress + '%');
           });
           
-          console.log('[AddProperty] Images uploaded:', uploadedImages);
+          // Only keep images that were actually uploaded to remote storage (public https:// URLs)
+          // Local file:// URIs mean the upload failed — don't save those to Supabase
+          uploadedImages = allUploaded.filter((uri) => isRemoteImageUrl(uri));
+          
+          // If no images uploaded successfully, fall back to original local URIs for payload
+          // (they will only be shown locally via previewImages)
+          if (uploadedImages.length === 0) {
+            uploadedImages = [];
+          }
+          
+          console.log('[AddProperty] Images uploaded successfully:', uploadedImages.length, 'of', images.length);
           setShowUploadModal(false);
         }
       } catch (error) {
-        console.error('[AddProperty] Image upload failed, continuing with local URIs:', error);
+        console.error('[AddProperty] Image upload failed, continuing without remote images:', error);
         setShowUploadModal(false);
+        uploadedImages = [];
+        uploadFailureMessage = error instanceof Error ? error.message : 'Property images could not be uploaded to Supabase.';
+      }
+
+      if (!isGuestSubmission && uploadedImages.length === 0) {
+        throw new Error(uploadFailureMessage || 'Property images could not be uploaded to Supabase. Please check your internet connection and try again.');
       }
       
       console.log('[AddProperty] Building property payload...');
@@ -386,9 +391,28 @@ export default function AddPropertyScreen() {
       if (editingProperty) {
         console.log('[AddProperty] Updating property:', editingProperty.id);
         savedProperty = await updatePropertyInSupabase(editingProperty.id, payload);
+        savedProperty = {
+          ...savedProperty,
+          previewImages: images,
+        };
+      } else if (isGuestSubmission) {
+        console.log('[AddProperty] Creating local guest property...');
+        const localPropertyId = addProperty(payload);
+        savedProperty = {
+          ...payload,
+          id: localPropertyId,
+          listingStatus: payload.listingStatus || 'available',
+          previewImages: images,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
       } else {
         console.log('[AddProperty] Creating new property...');
         savedProperty = await createPropertyInSupabase(payload);
+        savedProperty = {
+          ...savedProperty,
+          previewImages: images,
+        };
       }
 
       console.log('[AddProperty] Property saved:', savedProperty.id);
@@ -397,21 +421,43 @@ export default function AddPropertyScreen() {
         console.log('[AddProperty] Updating facilities...');
         const facilities = await updateFacilities(savedProperty.id);
         if (facilities.length > 0) {
-          savedProperty = await updatePropertyInSupabase(savedProperty.id, {
-            nearbyFacilities: facilities,
-          });
+          if (isGuestSubmission) {
+            updatePropertyFacilities(savedProperty.id, facilities);
+            savedProperty = {
+              ...savedProperty,
+              nearbyFacilities: facilities,
+              updatedAt: new Date().toISOString(),
+            };
+          } else {
+            const facilitiesUpdate = await updatePropertyInSupabase(savedProperty.id, {
+              nearbyFacilities: facilities,
+            });
+            // Preserve previewImages (local URIs) across the Supabase response
+            savedProperty = {
+              ...facilitiesUpdate,
+              previewImages: savedProperty.previewImages,
+            };
+          }
         }
       } catch (facilitiesError) {
         console.warn('[AddProperty] Facilities update failed, continuing with saved property:', facilitiesError);
       }
 
-      console.log('[AddProperty] Upserting property to store...');
-      upsertProperty(savedProperty);
+      if (editingProperty && isGuestSubmission) {
+        updateProperty(savedProperty.id, savedProperty);
+      } else {
+        console.log('[AddProperty] Upserting property to store...');
+        upsertProperty(savedProperty);
+      }
 
       console.log('[AddProperty] Success!');
       Alert.alert(
-        'Success',
-        editingProperty ? 'Property updated successfully!' : 'Property added successfully!',
+        isGuestSubmission ? 'Saved on this device' : 'Success',
+        editingProperty
+          ? 'Property updated successfully!'
+          : isGuestSubmission
+          ? 'Property added successfully. Sign in later if you want future listings synced to your account.'
+          : 'Property added successfully!',
         [{ text: 'OK', onPress: () => router.push('/' as any) }]
       );
     } catch (error: any) {

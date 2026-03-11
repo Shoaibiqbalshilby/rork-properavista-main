@@ -13,8 +13,8 @@ import { fetchAllPropertiesFromSupabase } from '@/lib/propertyApi';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { user, isAuthenticated } = useAuthStore();
   const { properties, filter, setFilter, getFeaturedProperties, setProperties } = usePropertyStore();
+  const { isAuthenticated } = useAuthStore();
   const [searchQuery, setSearchQuery] = React.useState('');
   const [filterModalVisible, setFilterModalVisible] = React.useState(false);
 
@@ -57,23 +57,10 @@ export default function HomeScreen() {
   };
   
   const handleAddProperty = () => {
-    if (!isAuthenticated || !user) {
-      Alert.alert('Business Users Only', 'Only business users can add the property. Please sign in first.');
+    if (!isAuthenticated) {
+      router.push('/login' as any);
       return;
     }
-
-    if (!user.companyName) {
-      Alert.alert(
-        'Business Profile Required',
-        'Only business users can add the property. Please complete your Business Profile first.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Open Profile', onPress: () => router.push('/business-profile' as any) },
-        ]
-      );
-      return;
-    }
-
     router.push('/add-property' as any);
   };
 

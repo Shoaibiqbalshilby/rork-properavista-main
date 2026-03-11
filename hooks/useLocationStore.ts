@@ -16,6 +16,7 @@ interface LocationState {
   
   requestLocationPermission: () => Promise<void>;
   getCurrentLocation: () => Promise<void>;
+  clearStoredLocation: () => void;
   clearError: () => void;
 }
 
@@ -108,6 +109,8 @@ export const useLocationStore = create<LocationState>()(
           });
         }
       },
+
+      clearStoredLocation: () => set({ userLocation: null }),
       
       clearError: () => set({ error: null })
     }),

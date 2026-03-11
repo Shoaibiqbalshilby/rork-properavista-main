@@ -10,7 +10,7 @@ import { Property } from '@/types/property';
 
 export default function MyPropertiesScreen() {
   const { user } = useAuthStore();
-  const { getPropertiesByUser } = usePropertyStore();
+  const { getPropertiesByUser, upsertProperty } = usePropertyStore();
   const [properties, setProperties] = React.useState<Property[]>([]);
 
   React.useEffect(() => {
@@ -23,7 +23,13 @@ export default function MyPropertiesScreen() {
 
       try {
         const userProperties = await fetchUserPropertiesFromSupabase(user.id);
-        setProperties(userProperties);
+        // Merge previewImages from the local store so images remain visible
+        const localProperties = getPropertiesByUser(user.id);
+        const merged = userProperties.map((remote) => {
+          const local = localProperties.find((p) => p.id === remote.id);
+          return local?.previewImages ? { ...remote, previewImages: local.previewImages } : remote;
+        });
+        setProperties(merged);
       } catch {
       }
     };

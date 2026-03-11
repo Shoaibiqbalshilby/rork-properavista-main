@@ -10,16 +10,26 @@ import {
 import { Image } from 'expo-image';
 import { ChevronLeft, ChevronRight } from 'lucide-react-native';
 import Colors from '@/constants/colors';
+import { prefetchPropertyImageUrls } from '@/utils/property-images';
 
 type PropertyImageGalleryProps = {
   images: string[];
+  previewImages?: string[];
 };
 
 const { width } = Dimensions.get('window');
 
-export default function PropertyImageGallery({ images }: PropertyImageGalleryProps) {
+export default function PropertyImageGallery({ images, previewImages }: PropertyImageGalleryProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const flatListRef = useRef<FlatList>(null);
+
+  // Use previewImages as fallback when no remote images available yet
+  const displayImages = images.length > 0 ? images : (previewImages || []);
+  const isShowingPreviews = images.length === 0 && (previewImages?.length ?? 0) > 0;
+
+  React.useEffect(() => {
+    void prefetchPropertyImageUrls(images);
+  }, [images]);
 
   const handlePrevious = () => {
     if (activeIndex > 0) {
@@ -49,27 +59,30 @@ export default function PropertyImageGallery({ images }: PropertyImageGalleryPro
     <View style={styles.container}>
       <FlatList
         ref={flatListRef}
-        data={images}
+        data={displayImages}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         onScroll={handleScroll}
         scrollEventThrottle={16}
         keyExtractor={(_, index) => index.toString()}
-        renderItem={({ item }) => (
+        renderItem={({ item, index }) => (
           <View style={styles.imageContainer}>
             <Image
               source={{ uri: item }}
+              // When showing remote images, use previewImages as placeholder while loading
+              placeholder={!isShowingPreviews && previewImages?.[index] ? { uri: previewImages[index] } : undefined}
               style={styles.image}
               contentFit="cover"
-              transition={300}
+              cachePolicy="memory-disk"
+              transition={120}
             />
           </View>
         )}
       />
 
       {/* Navigation buttons */}
-      {images.length > 1 && (
+      {displayImages.length > 1 && (
         <>
           {activeIndex > 0 && (
             <Pressable style={[styles.navButton, styles.leftButton]} onPress={handlePrevious}>
@@ -77,7 +90,7 @@ export default function PropertyImageGallery({ images }: PropertyImageGalleryPro
             </Pressable>
           )}
           
-          {activeIndex < images.length - 1 && (
+          {activeIndex < displayImages.length - 1 && (
             <Pressable style={[styles.navButton, styles.rightButton]} onPress={handleNext}>
               <ChevronRight size={24} color="white" />
             </Pressable>
@@ -86,13 +99,13 @@ export default function PropertyImageGallery({ images }: PropertyImageGalleryPro
           {/* Image counter */}
           <View style={styles.counter}>
             <Text style={styles.counterText}>
-              {activeIndex + 1} / {images.length}
+              {activeIndex + 1} / {displayImages.length}
             </Text>
           </View>
           
           {/* Dots indicator */}
           <View style={styles.dotsContainer}>
-            {images.map((_, index) => (
+            {displayImages.map((_, index) => (
               <View
                 key={index}
                 style={[

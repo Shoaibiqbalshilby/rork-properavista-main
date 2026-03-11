@@ -53,6 +53,11 @@ function RootLayoutNav() {
       <Stack.Screen name="signup" options={{ title: "Sign Up" }} />
       <Stack.Screen name="business-profile" options={{ title: "Business Profile" }} />
       <Stack.Screen name="add-property" options={{ title: "Add Property" }} />
+      <Stack.Screen name="settings" options={{ title: "Settings" }} />
+      <Stack.Screen name="notifications" options={{ title: "Notifications" }} />
+      <Stack.Screen name="privacy" options={{ title: "Privacy & Security" }} />
+      <Stack.Screen name="help" options={{ title: "Help & Support" }} />
+      <Stack.Screen name="messages" options={{ title: "Messages" }} />
       <Stack.Screen name="my-properties" options={{ title: "My Properties" }} />
       <Stack.Screen name="property/[id]" options={{ title: "Property" }} />
     </Stack>

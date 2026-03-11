@@ -8,6 +8,11 @@ import { useLocationStore } from '@/hooks/useLocationStore';
 import Colors from '@/constants/colors';
 import { Property } from '@/types/property';
 import { calculateDistance, formatDistance } from '@/utils/distance';
+import {
+  getPropertyImagePlaceholder,
+  getPropertyPrimaryImage,
+  prefetchPropertyImageUrls,
+} from '@/utils/property-images';
 
 type PropertyCardProps = {
   property: Property;
@@ -20,6 +25,11 @@ export default function PropertyCard({ property, isFeatured = false, showDistanc
   const { favorites, toggleFavorite } = usePropertyStore();
   const { userLocation } = useLocationStore();
   const isFavorite = favorites.includes(property.id);
+  const primaryImage = getPropertyPrimaryImage(property);
+
+  React.useEffect(() => {
+    void prefetchPropertyImageUrls(property.images);
+  }, [property.images]);
 
   const handlePress = () => {
     router.push(`/property/${property.id}` as any);
@@ -95,10 +105,12 @@ export default function PropertyCard({ property, isFeatured = false, showDistanc
     >
       <View style={styles.imageContainer}>
         <Image
-          source={{ uri: property.images[0] }}
+          source={primaryImage ? { uri: primaryImage } : undefined}
+          placeholder={getPropertyImagePlaceholder(property)}
           style={styles.image}
           contentFit="cover"
-          transition={200}
+          cachePolicy="memory-disk"
+          transition={120}
         />
         {isFeatured && (
           <View style={styles.featuredBadge}>

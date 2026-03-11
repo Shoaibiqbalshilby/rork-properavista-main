@@ -1,5 +1,86 @@
 import { supabaseClient } from '@/lib/supabase';
 
+const STORAGE_URL_PATTERN = /\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+)$/i;
+const MIME_TYPES_BY_EXTENSION: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  heic: 'image/heic',
+  heif: 'image/heif',
+};
+
+export const isRemoteImageUrl = (uri?: string | null) => !!uri && /^https?:\/\//i.test(uri);
+
+export const isLocalImageUri = (uri?: string | null) => !!uri && /^(file|content|ph|assets-library):/i.test(uri);
+
+export const extractStorageObjectPath = (uri?: string | null, bucket = 'property-images') => {
+  if (!uri || isLocalImageUri(uri)) {
+    return null;
+  }
+
+  if (!isRemoteImageUrl(uri)) {
+    return uri.replace(/^\/+/, '');
+  }
+
+  try {
+    const parsedUrl = new URL(uri);
+    const match = parsedUrl.pathname.match(STORAGE_URL_PATTERN);
+
+    if (!match) {
+      return null;
+    }
+
+    const [, bucketName, objectPath] = match;
+    if (bucketName !== bucket) {
+      return null;
+    }
+
+    return decodeURIComponent(objectPath);
+  } catch {
+    return null;
+  }
+};
+
+export const resolveStorageImageUrl = async (
+  uri?: string | null,
+  bucket: 'avatar-images' | 'property-images' = 'property-images'
+) => {
+  if (!uri) {
+    return '';
+  }
+
+  if (isLocalImageUri(uri)) {
+    return '';
+  }
+
+  const objectPath = extractStorageObjectPath(uri, bucket);
+  if (!objectPath) {
+    return uri;
+  }
+
+  try {
+    const { data, error } = await supabaseClient.storage.from(bucket).createSignedUrl(objectPath, 60 * 60 * 24 * 30);
+    if (!error && data?.signedUrl) {
+      return data.signedUrl;
+    }
+  } catch (error) {
+    console.warn('[Storage] Failed to create signed URL, falling back to public URL:', error);
+  }
+
+  const { data } = supabaseClient.storage.from(bucket).getPublicUrl(objectPath);
+  return data.publicUrl || uri;
+};
+
+export const resolveStorageImageUrls = async (
+  uris: string[],
+  bucket: 'avatar-images' | 'property-images' = 'property-images'
+) => {
+  const resolved = await Promise.all(uris.map((uri) => resolveStorageImageUrl(uri, bucket)));
+  return resolved.filter(Boolean);
+};
+
 const getFileExtension = (uri: string) => {
   const cleanUri = uri.split('?')[0];
   const extension = cleanUri.split('.').pop()?.toLowerCase();
@@ -14,6 +95,57 @@ const createFilePath = (userId: string, extension: string) => {
   return `${userId}/${Date.now()}-${randomPart}.${extension}`;
 };
 
+const getMimeType = (uri: string, fallbackType?: string | null) => {
+  if (fallbackType) {
+    return fallbackType;
+  }
+
+  const extension = getFileExtension(uri);
+  return MIME_TYPES_BY_EXTENSION[extension] || 'image/jpeg';
+};
+
+const blobFromXhr = (uri: string) =>
+  new Promise<Blob>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onerror = () => reject(new Error('XMLHttpRequest failed to read the image file.'));
+    xhr.onload = () => resolve(xhr.response as Blob);
+    xhr.responseType = 'blob';
+    xhr.open('GET', uri, true);
+    xhr.send();
+  });
+
+const readImageAsArrayBuffer = async (uri: string) => {
+  try {
+    const response = await fetch(uri);
+    if (!response.ok) {
+      throw new Error(`Failed to read image file: ${response.status} ${response.statusText}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength === 0) {
+      throw new Error('Image file is empty.');
+    }
+
+    return {
+      body: arrayBuffer,
+      contentType: getMimeType(uri, response.headers.get('content-type')),
+    };
+  } catch (fetchError) {
+    console.warn('[Storage] Fetch-based file read failed, trying XHR fallback:', fetchError);
+    const blob = await blobFromXhr(uri);
+    const arrayBuffer = await blob.arrayBuffer();
+
+    if (arrayBuffer.byteLength === 0) {
+      throw new Error('Image file is empty.');
+    }
+
+    return {
+      body: arrayBuffer,
+      contentType: getMimeType(uri, blob.type),
+    };
+  }
+};
+
 export const uploadImageToBucket = async (
   imageUri: string,
   bucket: 'avatar-images' | 'property-images',
@@ -26,25 +158,17 @@ export const uploadImageToBucket = async (
 
   try {
     console.log(`[Storage] Starting upload to ${bucket} for user ${userId}`);
-    console.log('[Storage] Fetching image from URI:', imageUri);
-    
-    const response = await fetch(imageUri);
-    if (!response.ok) {
-      console.error('[Storage] Failed to fetch image:', response.status, response.statusText);
-      return imageUri;
-    }
-    
-    const blob = await response.blob();
-    console.log('[Storage] Image blob size:', blob.size, 'type:', blob.type);
-    
     const extension = getFileExtension(imageUri);
     const filePath = createFilePath(userId, extension);
+    const { body, contentType } = await readImageAsArrayBuffer(imageUri);
+
+    console.log('[Storage] Uploading image bytes:', body.byteLength, 'type:', contentType);
     console.log('[Storage] Uploading to path:', filePath);
 
     const { data: uploadData, error } = await supabaseClient.storage
       .from(bucket)
-      .upload(filePath, blob, {
-        contentType: blob.type || `image/${extension}`,
+      .upload(filePath, body, {
+        contentType,
         upsert: false,
       });
 
@@ -55,7 +179,7 @@ export const uploadImageToBucket = async (
         bucket,
         filePath,
       });
-      return imageUri; // Return original URI if upload fails
+      throw new Error(error.message || 'Upload failed');
     }
 
     console.log('[Storage] Upload successful:', uploadData?.path);
@@ -64,7 +188,7 @@ export const uploadImageToBucket = async (
     return data.publicUrl;
   } catch (error) {
     console.error('[Storage] Exception during upload:', error);
-    return imageUri; // Return original URI if any error occurs
+    throw error instanceof Error ? error : new Error('Image upload failed');
   }
 };
 
@@ -73,25 +197,19 @@ export const uploadPropertyImages = async (
   userId: string,
   onProgress?: (progress: number) => void
 ) => {
-  try {
-    const totalImages = images.length;
-    const uploaded: string[] = [];
-    
-    for (let i = 0; i < images.length; i++) {
-      const imageUri = images[i];
-      const uploadedUri = await uploadImageToBucket(imageUri, 'property-images', userId);
-      uploaded.push(uploadedUri);
-      
-      // Calculate and report progress
-      const progress = Math.round(((i + 1) / totalImages) * 100);
-      if (onProgress) {
-        onProgress(progress);
-      }
+  const totalImages = images.length;
+  const uploaded: string[] = [];
+
+  for (let i = 0; i < images.length; i++) {
+    const imageUri = images[i];
+    const uploadedUri = await uploadImageToBucket(imageUri, 'property-images', userId);
+    uploaded.push(uploadedUri);
+
+    const progress = Math.round(((i + 1) / totalImages) * 100);
+    if (onProgress) {
+      onProgress(progress);
     }
-    
-    return uploaded;
-  } catch (error) {
-    console.error('Property images upload failed:', error);
-    return images; // Return original images if upload fails
   }
+
+  return uploaded;
 };

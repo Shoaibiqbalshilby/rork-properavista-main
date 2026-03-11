@@ -1,4 +1,5 @@
 import { supabaseClient } from '@/lib/supabase';
+import { resolveStorageImageUrls } from '@/lib/storage';
 import { Property } from '@/types/property';
 
 type PropertyRow = {
@@ -88,6 +89,14 @@ const mapPropertyToRow = (property: Omit<Property, 'id'>, userId: string) => ({
   nearby_facilities: property.nearbyFacilities || [],
 });
 
+const mapRowToPropertyWithResolvedImages = async (row: PropertyRow): Promise<Property> => {
+  const resolvedImages = await resolveStorageImageUrls(row.images || [], 'property-images');
+  return mapRowToProperty({
+    ...row,
+    images: resolvedImages,
+  });
+};
+
 export const fetchAllPropertiesFromSupabase = async () => {
   const { data, error } = await supabaseClient
     .from('properties')
@@ -98,7 +107,7 @@ export const fetchAllPropertiesFromSupabase = async () => {
     throw new Error(error.message);
   }
 
-  return ((data || []) as PropertyRow[]).map(mapRowToProperty);
+  return Promise.all(((data || []) as PropertyRow[]).map(mapRowToPropertyWithResolvedImages));
 };
 
 export const fetchUserPropertiesFromSupabase = async (userId: string) => {
@@ -112,7 +121,7 @@ export const fetchUserPropertiesFromSupabase = async (userId: string) => {
     throw new Error(error.message);
   }
 
-  return ((data || []) as PropertyRow[]).map(mapRowToProperty);
+  return Promise.all(((data || []) as PropertyRow[]).map(mapRowToPropertyWithResolvedImages));
 };
 
 export const createPropertyInSupabase = async (property: Omit<Property, 'id'>) => {
@@ -148,7 +157,7 @@ export const createPropertyInSupabase = async (property: Omit<Property, 'id'>) =
   }
 
   console.log('[PropertyAPI] Property created successfully:', data?.id);
-  return mapRowToProperty(data as PropertyRow);
+  return mapRowToPropertyWithResolvedImages(data as PropertyRow);
 };
 
 export const updatePropertyInSupabase = async (
@@ -205,5 +214,5 @@ export const updatePropertyInSupabase = async (
     throw new Error(error.message);
   }
 
-  return mapRowToProperty(data as PropertyRow);
+  return mapRowToPropertyWithResolvedImages(data as PropertyRow);
 };
