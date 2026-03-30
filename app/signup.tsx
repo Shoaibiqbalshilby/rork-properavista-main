@@ -141,7 +141,7 @@ export default function SignupScreen() {
             contentFit="cover"
           />
           <View style={styles.overlay} />
-          <Text style={styles.logoText}>HomeHub</Text>
+          <Text style={styles.logoText}>Properavista</Text>
           <Text style={styles.tagline}>Find your perfect home</Text>
         </View>
         
