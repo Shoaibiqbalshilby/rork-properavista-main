@@ -32,9 +32,10 @@ import PropertyFeature from '@/components/PropertyFeature';
 import PropertyImageGallery from '@/components/PropertyImageGallery';
 import Colors from '@/constants/colors';
 import { calculateDistance, formatDistance } from '@/utils/distance';
-import { normalizePhone, whatsappUrl } from '@/utils/contact';
+import { normalizePhone } from '@/utils/contact';
 import { getNearbyFacilityDistances } from '@/utils/facilities';
 import { getStaticMapUrl, hasGoogleMapsApiKey } from '@/constants/maps';
+import { supabaseClient } from '@/lib/supabase';
 
 const mapProvider = Platform.OS === 'android' && hasGoogleMapsApiKey ? PROVIDER_GOOGLE : undefined;
 const hasNativeMapView = Platform.OS !== 'web' && !!UIManager.getViewManagerConfig?.('AIRMap');
@@ -53,6 +54,54 @@ export default function PropertyDetailScreen() {
   const [selectedPaymentFrequency, setSelectedPaymentFrequency] = useState<string | undefined>(
     property?.paymentFrequency?.rent || property?.paymentFrequency?.['short-let'] || undefined
   );
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+
+  // Live lister business profile fetched from Supabase.
+  // Priority: business_profiles table (website primary) → user_profiles table (mobile) → property.lister snapshot.
+  const [liveProfile, setLiveProfile] = useState<{
+    name?: string;
+    companyName?: string;
+    phone?: string;
+    whatsapp?: string;
+    address?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!property?.listedByUserId) return;
+    let cancelled = false;
+    const fetchListerProfile = async () => {
+      const userId = property.listedByUserId!;
+
+      // 1. Try business_profiles (same table the website writes to)
+      const { data: bpData, error: bpError } = await supabaseClient
+        .from('business_profiles')
+        .select('company_name, contact_phone, whatsapp_number, address')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      // 2. Try user_profiles (mobile auth table with name + contact)
+      const { data: upData } = await supabaseClient
+        .from('user_profiles')
+        .select('name, company_name, phone, whatsapp, address')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      const bpTableMissing = bpError?.message?.includes('Could not find the table');
+      const bpRow = !bpTableMissing ? bpData : null;
+
+      setLiveProfile({
+        name: upData?.name || undefined,
+        companyName: bpRow?.company_name || upData?.company_name || undefined,
+        phone: bpRow?.contact_phone || upData?.phone || undefined,
+        whatsapp: bpRow?.whatsapp_number || upData?.whatsapp || undefined,
+        address: bpRow?.address || upData?.address || undefined,
+      });
+    };
+    fetchListerProfile();
+    return () => { cancelled = true; };
+  }, [property?.listedByUserId]);
 
   const distance =
     userLocation && property
@@ -115,8 +164,15 @@ export default function PropertyDetailScreen() {
     Alert.alert('Share', 'Share functionality can be connected here.');
   };
 
+  // Merged lister info: live Supabase data takes priority over property snapshot
+  const listerName = liveProfile?.name || property.lister?.name || 'Property Owner';
+  const listerCompany = liveProfile?.companyName || property.lister?.companyName;
+  const listerPhone = liveProfile?.phone || property.lister?.phone;
+  const listerWhatsapp = liveProfile?.whatsapp || property.lister?.whatsapp;
+  const listerAddress = liveProfile?.address || property.lister?.address;
+
   const handleContactPress = async () => {
-    const phone = normalizePhone(property.lister?.phone);
+    const phone = normalizePhone(listerPhone);
     if (!phone) {
       Alert.alert('Phone not available', 'Lister has not added a phone number yet.');
       return;
@@ -132,6 +188,55 @@ export default function PropertyDetailScreen() {
     Alert.alert('Dialer unavailable', 'Your device could not open the phone dialer.');
   };
 
+  const sendMessageToOwner = async () => {
+    if (!property.listedByUserId) {
+      Alert.alert('Message unavailable', 'This listing is missing owner details.');
+      return;
+    }
+
+    const { data: authData, error: authError } = await supabaseClient.auth.getUser();
+    const authUser = authData.user;
+    const senderId = authUser?.id || user?.id;
+    const senderEmail = authUser?.email || user?.email;
+    const senderName = user?.name || authUser?.user_metadata?.name || 'Anonymous';
+    const senderPhone = user?.phone || null;
+
+    if (authError || !senderId || !senderEmail) {
+      Alert.alert('Sign In Required', 'Please sign in to send a message to the property owner.');
+      return;
+    }
+
+    const messageBody = [
+      'Hello, I am interested in this property.',
+      '',
+      `Title: ${property.title}`,
+      `Price: ${formatPrice(adjustedPrice)}${selectedPaymentFrequency ? getPaymentFrequencyLabel(selectedPaymentFrequency) : ''}`,
+      `Type: ${getListingTypeLabel()}`,
+      `Location: ${property.address}, ${property.city}, ${property.state}`,
+    ].join('\n');
+
+    setIsSendingMessage(true);
+    const { error } = await supabaseClient.from('messages').insert({
+      recipient_id: property.listedByUserId,
+      sender_id: senderId,
+      sender_name: senderName,
+      sender_email: senderEmail,
+      sender_phone: senderPhone,
+      property_id: property.id,
+      property_title: property.title,
+      message: messageBody,
+      is_read: false,
+    });
+    setIsSendingMessage(false);
+
+    if (error) {
+      Alert.alert('Unable to send message', error.message);
+      return;
+    }
+
+    Alert.alert('Message sent', 'Your message has been saved and sent to the property owner inbox.');
+  };
+
   const handleMessagePress = async () => {
     const message = [
       'Hello, I am interested in this property.',
@@ -141,20 +246,37 @@ export default function PropertyDetailScreen() {
       `Type: ${getListingTypeLabel()}`,
       `Location: ${property.address}, ${property.city}, ${property.state}`,
     ].join('\n');
-    const url = whatsappUrl(property.lister?.whatsapp || property.lister?.phone, message);
 
-    if (!url) {
-      Alert.alert('WhatsApp not available', 'Lister has not added a WhatsApp number yet.');
+    Alert.alert(
+      'Send Message',
+      [
+        `Property Owner: ${listerName}`,
+        `Owner Contact: ${listerPhone || 'Not provided'}`,
+        '',
+        `Sender: ${user?.name || 'Guest'}`,
+        `Email: ${user?.email || 'Not provided'}`,
+        `Phone: ${user?.phone || 'Not provided'}`,
+        '',
+        'Preview:',
+        message,
+      ].join('\n'),
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Send', onPress: () => void sendMessageToOwner() },
+      ]
+    );
+  };
+
+  const handleContactCardPress = () => {
+    if (!listerPhone) {
+      Alert.alert('Contact unavailable', 'Property owner has not added a contact number yet.');
       return;
     }
 
-    const canOpen = await Linking.canOpenURL(url);
-    if (canOpen) {
-      Linking.openURL(url);
-      return;
-    }
-
-    Alert.alert('WhatsApp unavailable', 'Please ensure WhatsApp is installed on your device.');
+    Alert.alert('Property Owner Contact', listerPhone, [
+      { text: 'Close', style: 'cancel' },
+      { text: 'Call', onPress: () => void handleContactPress() },
+    ]);
   };
 
   const handleEditPress = () => {
@@ -413,20 +535,33 @@ export default function PropertyDetailScreen() {
             <View style={styles.detailsGrid}>
               <View style={styles.detailItem}>
                 <Text style={styles.detailLabel}>Name</Text>
-                <Text style={styles.detailValue}>{property.lister?.name || 'Property Owner'}</Text>
+                <Text style={styles.detailValue}>{listerName}</Text>
               </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Company</Text>
-                <Text style={styles.detailValue}>{property.lister?.companyName || 'Not provided'}</Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Contact</Text>
-                <Text style={styles.detailValue}>{property.lister?.phone || 'Not provided'}</Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Address</Text>
-                <Text style={styles.detailValue}>{property.lister?.address || 'Not provided'}</Text>
-              </View>
+              {listerCompany ? (
+                <View style={styles.detailItem}>
+                  <Text style={styles.detailLabel}>Company</Text>
+                  <Text style={styles.detailValue}>{listerCompany}</Text>
+                </View>
+              ) : null}
+              {listerPhone ? (
+                <Pressable style={styles.detailItem} onPress={handleContactCardPress}>
+                  <Text style={styles.detailLabel}>Contact</Text>
+                  <Text style={styles.detailValue}>{listerPhone}</Text>
+                  <Text style={styles.detailHint}>Tap to view contact popup</Text>
+                </Pressable>
+              ) : null}
+              {listerWhatsapp && listerWhatsapp !== listerPhone ? (
+                <View style={styles.detailItem}>
+                  <Text style={styles.detailLabel}>WhatsApp</Text>
+                  <Text style={styles.detailValue}>{listerWhatsapp}</Text>
+                </View>
+              ) : null}
+              {listerAddress ? (
+                <View style={styles.detailItem}>
+                  <Text style={styles.detailLabel}>Address</Text>
+                  <Text style={styles.detailValue}>{listerAddress}</Text>
+                </View>
+              ) : null}
             </View>
           </View>
 
@@ -444,9 +579,9 @@ export default function PropertyDetailScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Pressable style={styles.messageButton} onPress={handleMessagePress}>
+        <Pressable style={[styles.messageButton, isSendingMessage && styles.buttonDisabled]} onPress={handleMessagePress} disabled={isSendingMessage}>
           <MessageCircle size={22} color={Colors.light.primary} />
-          <Text style={styles.messageButtonText}>WhatsApp</Text>
+          <Text style={styles.messageButtonText}>{isSendingMessage ? 'Sending...' : 'Send Message'}</Text>
         </Pressable>
         <Pressable style={styles.callButton} onPress={handleContactPress}>
           <Phone size={22} color="white" />
@@ -610,6 +745,11 @@ const styles = StyleSheet.create({
     color: Colors.light.text,
     fontWeight: '500',
   },
+  detailHint: {
+    marginTop: 6,
+    fontSize: 12,
+    color: Colors.light.primary,
+  },
   amenitiesContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -666,6 +806,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingVertical: 12,
     marginRight: 8,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   messageButtonText: {
     color: Colors.light.primary,

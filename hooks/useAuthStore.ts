@@ -66,6 +66,21 @@ const shouldUseSupabaseFallback = (error: unknown) => {
   );
 };
 
+const syncSupabaseClientSession = async (session: Session) => {
+  if (!session.accessToken || !session.refreshToken) {
+    return;
+  }
+
+  const { error } = await supabaseClient.auth.setSession({
+    access_token: session.accessToken,
+    refresh_token: session.refreshToken,
+  });
+
+  if (error) {
+    throw new Error(`Supabase session sync failed: ${error.message}`);
+  }
+};
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -105,6 +120,8 @@ export const useAuthStore = create<AuthState>()(
               isLoading: false,
               error: null
             });
+
+            await syncSupabaseClientSession(session);
             
             // Store tokens in secure storage
             await AsyncStorage.setItem('auth_token', session.accessToken);
@@ -282,6 +299,8 @@ export const useAuthStore = create<AuthState>()(
                 error: null,
               });
 
+              await syncSupabaseClientSession(session);
+
               await AsyncStorage.setItem('auth_token', session.accessToken);
               await AsyncStorage.setItem('refresh_token', session.refreshToken);
             };
@@ -317,6 +336,9 @@ export const useAuthStore = create<AuthState>()(
       },
       
       logout: () => {
+        supabaseClient.auth.signOut().catch(() => {
+          // Ignore sign-out errors here and continue clearing local state.
+        });
         AsyncStorage.removeItem('auth_token');
         AsyncStorage.removeItem('refresh_token');
         set({ 
