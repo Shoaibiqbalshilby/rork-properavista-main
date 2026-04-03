@@ -19,6 +19,7 @@ DROP FUNCTION IF EXISTS public.update_updated_at_column() CASCADE;
 
 -- Drop all tables (CASCADE removes dependent objects)
 DROP TABLE IF EXISTS public.properties CASCADE;
+DROP TABLE IF EXISTS public.messages CASCADE;
 DROP TABLE IF EXISTS public.password_reset_tokens CASCADE;
 DROP TABLE IF EXISTS public.user_profiles CASCADE;
 
@@ -97,6 +98,57 @@ CREATE POLICY "password_reset_tokens_insert_policy"
 -- Indexes
 CREATE INDEX idx_password_reset_tokens_user_id ON public.password_reset_tokens(user_id);
 CREATE INDEX idx_password_reset_tokens_expires_at ON public.password_reset_tokens(expires_at);
+
+-- ============================================
+-- MESSAGES TABLE
+-- ============================================
+CREATE TABLE public.messages (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  recipient_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  sender_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  sender_name VARCHAR(255) NOT NULL,
+  sender_email VARCHAR(255) NOT NULL,
+  sender_phone VARCHAR(30),
+  property_id UUID,
+  property_title VARCHAR(255),
+  message TEXT NOT NULL,
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable RLS
+ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies
+CREATE POLICY "messages_select_policy"
+  ON public.messages
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = recipient_id OR auth.uid() = sender_id);
+
+CREATE POLICY "messages_insert_policy"
+  ON public.messages
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = sender_id);
+
+CREATE POLICY "messages_update_policy"
+  ON public.messages
+  FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = recipient_id)
+  WITH CHECK (auth.uid() = recipient_id);
+
+CREATE POLICY "messages_delete_policy"
+  ON public.messages
+  FOR DELETE
+  TO authenticated
+  USING (auth.uid() = recipient_id OR auth.uid() = sender_id);
+
+-- Indexes
+CREATE INDEX idx_messages_recipient_created_at ON public.messages(recipient_id, created_at DESC);
+CREATE INDEX idx_messages_sender_created_at ON public.messages(sender_id, created_at DESC);
+CREATE INDEX idx_messages_property_id ON public.messages(property_id);
 
 -- ============================================
 -- PROPERTIES TABLE
@@ -189,6 +241,23 @@ CREATE TRIGGER update_properties_updated_at
   BEFORE UPDATE ON public.properties
   FOR EACH ROW
   EXECUTE FUNCTION public.update_updated_at_column();
+
+-- Add FK after properties exists (safe for fresh and existing databases)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'messages_property_id_fkey'
+  ) THEN
+    ALTER TABLE public.messages
+      ADD CONSTRAINT messages_property_id_fkey
+      FOREIGN KEY (property_id)
+      REFERENCES public.properties(id)
+      ON DELETE SET NULL;
+  END IF;
+END;
+$$;
 
 -- ============================================
 -- STORAGE POLICIES CLEANUP

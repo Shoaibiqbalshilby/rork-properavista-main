@@ -37,9 +37,9 @@ const getTrpcUrl = () => {
     return `http://${host}:8081/api/trpc`;
   }
 
-  throw new Error(
-    "No API base URL found. Set EXPO_PUBLIC_RORK_API_BASE_URL or run with Expo dev server."
-  );
+  // Fallback so the module doesn't throw at load time on a built APK.
+  // API-dependent features will show their own error messages instead of freezing on the splash.
+  return "http://localhost:8081/api/trpc";
 };
 
 export const trpcClient = trpc.createClient({

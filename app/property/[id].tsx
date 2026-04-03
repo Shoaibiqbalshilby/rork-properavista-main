@@ -10,6 +10,12 @@ import {
   Alert,
   UIManager,
   Image,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  Keyboard,
+  ActivityIndicator,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import {
@@ -55,6 +61,8 @@ export default function PropertyDetailScreen() {
     property?.paymentFrequency?.rent || property?.paymentFrequency?.['short-let'] || undefined
   );
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [showMessageModal, setShowMessageModal] = useState(false);
+  const [draftMessage, setDraftMessage] = useState('');
 
   // Live lister business profile fetched from Supabase.
   // Priority: business_profiles table (website primary) → user_profiles table (mobile) → property.lister snapshot.
@@ -174,21 +182,14 @@ export default function PropertyDetailScreen() {
   const handleContactPress = async () => {
     const phone = normalizePhone(listerPhone);
     if (!phone) {
-      Alert.alert('Phone not available', 'Lister has not added a phone number yet.');
+      Alert.alert('Phone not available', 'The property owner has not added a phone number yet.');
       return;
     }
-
-    const telUrl = `tel:${phone}`;
-    const canOpen = await Linking.canOpenURL(telUrl);
-    if (canOpen) {
-      Linking.openURL(telUrl);
-      return;
-    }
-
-    Alert.alert('Dialer unavailable', 'Your device could not open the phone dialer.');
+    // Open dialer immediately pre-filled with the lister number
+    Linking.openURL(`tel:${phone}`);
   };
 
-  const sendMessageToOwner = async () => {
+  const sendMessageToOwner = async (body: string) => {
     if (!property.listedByUserId) {
       Alert.alert('Message unavailable', 'This listing is missing owner details.');
       return;
@@ -197,74 +198,90 @@ export default function PropertyDetailScreen() {
     const { data: authData, error: authError } = await supabaseClient.auth.getUser();
     const authUser = authData.user;
     const senderId = authUser?.id || user?.id;
-    const senderEmail = authUser?.email || user?.email;
-    const senderName = user?.name || authUser?.user_metadata?.name || 'Anonymous';
-    const senderPhone = user?.phone || null;
 
-    if (authError || !senderId || !senderEmail) {
+    if (authError || !senderId) {
       Alert.alert('Sign In Required', 'Please sign in to send a message to the property owner.');
       return;
     }
 
-    const messageBody = [
-      'Hello, I am interested in this property.',
-      '',
-      `Title: ${property.title}`,
-      `Price: ${formatPrice(adjustedPrice)}${selectedPaymentFrequency ? getPaymentFrequencyLabel(selectedPaymentFrequency) : ''}`,
-      `Type: ${getListingTypeLabel()}`,
-      `Location: ${property.address}, ${property.city}, ${property.state}`,
-    ].join('\n');
-
     setIsSendingMessage(true);
-    const { error } = await supabaseClient.from('messages').insert({
-      recipient_id: property.listedByUserId,
-      sender_id: senderId,
-      sender_name: senderName,
-      sender_email: senderEmail,
-      sender_phone: senderPhone,
-      property_id: property.id,
-      property_title: property.title,
-      message: messageBody,
-      is_read: false,
-    });
-    setIsSendingMessage(false);
 
-    if (error) {
-      Alert.alert('Unable to send message', error.message);
-      return;
+    try {
+      // Find or create conversation between sender and owner for this property
+      const { data: existingConv, error: convQueryError } = await supabaseClient
+        .from('conversations')
+        .select('id')
+        .eq('property_id', property.id)
+        .or(`and(user_1_id.eq.${senderId},user_2_id.eq.${property.listedByUserId}),and(user_1_id.eq.${property.listedByUserId},user_2_id.eq.${senderId})`)
+        .single();
+
+      let conversationId: string;
+
+      if (existingConv?.id) {
+        // Use existing conversation
+        conversationId = existingConv.id;
+      } else {
+        // Create new conversation
+        const { data: newConv, error: createError } = await supabaseClient
+          .from('conversations')
+          .insert({
+            property_id: property.id,
+            user_1_id: senderId,
+            user_2_id: property.listedByUserId,
+          })
+          .select('id')
+          .single();
+
+        if (createError || !newConv?.id) {
+          setIsSendingMessage(false);
+          Alert.alert('Unable to create conversation', createError?.message || 'Try again later.');
+          return;
+        }
+
+        conversationId = newConv.id;
+      }
+
+      // Insert message into conversation_messages table
+      const { error: msgError } = await supabaseClient.from('conversation_messages').insert({
+        conversation_id: conversationId,
+        sender_id: senderId,
+        message: body.trim(),
+        is_read: false,
+      });
+
+      setIsSendingMessage(false);
+
+      if (msgError) {
+        const errorText = (msgError.message || '').toLowerCase();
+        if (errorText.includes("could not find") && (errorText.includes("conversation_messages") || errorText.includes("conversations"))) {
+          Alert.alert(
+            'Tables missing',
+            'Supabase is missing conversation tables. Run backend/db/schema_fixed.sql in your Supabase SQL Editor, then try again.'
+          );
+        } else {
+          Alert.alert('Unable to send message', msgError.message);
+        }
+        return;
+      }
+
+      setShowMessageModal(false);
+      setDraftMessage('');
+      Alert.alert('Message Sent', 'Your message has been delivered to the property owner inbox.');
+    } catch (error) {
+      setIsSendingMessage(false);
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
     }
-
-    Alert.alert('Message sent', 'Your message has been saved and sent to the property owner inbox.');
   };
 
-  const handleMessagePress = async () => {
-    const message = [
-      'Hello, I am interested in this property.',
+  const handleMessagePress = () => {
+    const defaultBody = [
+      'Hi, I am interested in this property.',
       '',
-      `Title: ${property.title}`,
-      `Price: ${formatPrice(adjustedPrice)}${selectedPaymentFrequency ? getPaymentFrequencyLabel(selectedPaymentFrequency) : ''}`,
-      `Type: ${getListingTypeLabel()}`,
+      `Property: ${property.title}`,
       `Location: ${property.address}, ${property.city}, ${property.state}`,
     ].join('\n');
-
-    Alert.alert(
-      'Send Message',
-      [
-        `Property Owner: ${listerName}`,
-        `Owner Contact: ${listerPhone || 'Not provided'}`,
-        '',
-        `Sender: ${user?.name || 'Guest'}`,
-        `Email: ${user?.email || 'Not provided'}`,
-        `Phone: ${user?.phone || 'Not provided'}`,
-        '',
-        'Preview:',
-        message,
-      ].join('\n'),
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Send', onPress: () => void sendMessageToOwner() },
-      ]
-    );
+    setDraftMessage(defaultBody);
+    setShowMessageModal(true);
   };
 
   const handleContactCardPress = () => {
@@ -579,15 +596,67 @@ export default function PropertyDetailScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Pressable style={[styles.messageButton, isSendingMessage && styles.buttonDisabled]} onPress={handleMessagePress} disabled={isSendingMessage}>
+        <Pressable style={styles.messageButton} onPress={handleMessagePress}>
           <MessageCircle size={22} color={Colors.light.primary} />
-          <Text style={styles.messageButtonText}>{isSendingMessage ? 'Sending...' : 'Send Message'}</Text>
+          <Text style={styles.messageButtonText}>Send Message</Text>
         </Pressable>
         <Pressable style={styles.callButton} onPress={handleContactPress}>
           <Phone size={22} color="white" />
           <Text style={styles.callButtonText}>Call Lister</Text>
         </Pressable>
       </View>
+
+      {/* ─── Message Compose Modal ─────────────────────────────── */}
+      <Modal
+        visible={showMessageModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowMessageModal(false)}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.modalOverlay}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={styles.modalCard}
+            >
+              <Text style={styles.modalTitle}>Send Message</Text>
+              <Text style={styles.modalSubtitle}>
+                To: {property.title}
+              </Text>
+
+              <TextInput
+                style={styles.messageInput}
+                value={draftMessage}
+                onChangeText={setDraftMessage}
+                placeholder="Write your message here…"
+                placeholderTextColor={Colors.light.subtext}
+                multiline
+                textAlignVertical="top"
+                autoFocus
+              />
+
+              <View style={styles.modalActions}>
+                <Pressable
+                  style={styles.modalCancelBtn}
+                  onPress={() => setShowMessageModal(false)}
+                  disabled={isSendingMessage}
+                >
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.modalSendBtn, (isSendingMessage || !draftMessage.trim()) && styles.buttonDisabled]}
+                  onPress={() => void sendMessageToOwner(draftMessage)}
+                  disabled={isSendingMessage || !draftMessage.trim()}
+                >
+                  {isSendingMessage
+                    ? <ActivityIndicator color="white" size="small" />
+                    : <Text style={styles.modalSendText}>Send</Text>}
+                </Pressable>
+              </View>
+            </KeyboardAvoidingView>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
     </>
   );
 }
@@ -853,5 +922,70 @@ const styles = StyleSheet.create({
   backButtonText: {
     color: 'white',
     fontWeight: '600',
+  },
+  // ─── Message Compose Modal ────────────────────────────────────────────────
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: Colors.light.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.light.text,
+    marginBottom: 4,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: Colors.light.subtext,
+    marginBottom: 14,
+  },
+  messageInput: {
+    backgroundColor: Colors.light.card,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 14,
+    color: Colors.light.text,
+    minHeight: 150,
+    marginBottom: 16,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    color: Colors.light.text,
+    fontWeight: '600',
+    fontSize: 15,
+  },
+  modalSendBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: Colors.light.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalSendText: {
+    color: 'white',
+    fontWeight: '700',
+    fontSize: 15,
   },
 });
