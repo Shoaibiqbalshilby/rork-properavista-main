@@ -87,6 +87,19 @@ export default function ConversationScreen() {
       .update({ is_read: true, read_at: new Date().toISOString() })
       .in('id', messageIds);
 
+    if (error?.code === 'PGRST204' && error.message?.includes("'read_at' column")) {
+      const { error: fallbackError } = await supabaseClient
+        .from('conversation_messages')
+        .update({ is_read: true })
+        .in('id', messageIds);
+
+      if (fallbackError) {
+        console.error('Error marking messages as read:', fallbackError);
+      }
+
+      return;
+    }
+
     if (error) {
       console.error('Error marking messages as read:', error);
     }

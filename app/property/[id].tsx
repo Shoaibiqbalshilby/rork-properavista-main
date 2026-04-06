@@ -63,6 +63,7 @@ export default function PropertyDetailScreen() {
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [showMessageModal, setShowMessageModal] = useState(false);
   const [draftMessage, setDraftMessage] = useState('');
+  const [ownerUserId, setOwnerUserId] = useState<string | null>(property?.listedByUserId || null);
 
   // Live lister business profile fetched from Supabase.
   // Priority: business_profiles table (website primary) → user_profiles table (mobile) → property.lister snapshot.
@@ -75,41 +76,72 @@ export default function PropertyDetailScreen() {
   } | null>(null);
 
   useEffect(() => {
-    if (!property?.listedByUserId) return;
     let cancelled = false;
+
     const fetchListerProfile = async () => {
-      const userId = property.listedByUserId!;
+      if (!property?.id) {
+        if (!cancelled) {
+          setOwnerUserId(null);
+          setLiveProfile(null);
+        }
+        return;
+      }
+
+      const { data: propertyData } = await supabaseClient
+        .from('properties')
+        .select('user_id, lister')
+        .eq('id', property.id)
+        .maybeSingle();
+
+      const userId = propertyData?.user_id || property.listedByUserId;
+      const listerSnapshot = propertyData?.lister || property.lister;
+
+      if (!userId) {
+        if (!cancelled) {
+          setOwnerUserId(null);
+          setLiveProfile({
+            name: listerSnapshot?.name || undefined,
+            companyName: listerSnapshot?.companyName || undefined,
+            phone: listerSnapshot?.phone || undefined,
+            whatsapp: listerSnapshot?.whatsapp || undefined,
+            address: listerSnapshot?.address || undefined,
+          });
+        }
+        return;
+      }
 
       // 1. Try business_profiles (same table the website writes to)
-      const { data: bpData, error: bpError } = await supabaseClient
-        .from('business_profiles')
-        .select('company_name, contact_phone, whatsapp_number, address')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      // 2. Try user_profiles (mobile auth table with name + contact)
-      const { data: upData } = await supabaseClient
-        .from('user_profiles')
-        .select('name, company_name, phone, whatsapp, address')
-        .eq('id', userId)
-        .maybeSingle();
+      const [{ data: bpData, error: bpError }, { data: upData }] = await Promise.all([
+        supabaseClient
+          .from('business_profiles')
+          .select('company_name, contact_phone, whatsapp_number, address')
+          .eq('user_id', userId)
+          .maybeSingle(),
+        supabaseClient
+          .from('user_profiles')
+          .select('name, company_name, phone, whatsapp, address')
+          .eq('id', userId)
+          .maybeSingle(),
+      ]);
 
       if (cancelled) return;
 
       const bpTableMissing = bpError?.message?.includes('Could not find the table');
       const bpRow = !bpTableMissing ? bpData : null;
 
+      setOwnerUserId(userId);
       setLiveProfile({
-        name: upData?.name || undefined,
-        companyName: bpRow?.company_name || upData?.company_name || undefined,
-        phone: bpRow?.contact_phone || upData?.phone || undefined,
-        whatsapp: bpRow?.whatsapp_number || upData?.whatsapp || undefined,
-        address: bpRow?.address || upData?.address || undefined,
+        name: upData?.name || listerSnapshot?.name || undefined,
+        companyName: bpRow?.company_name || upData?.company_name || listerSnapshot?.companyName || undefined,
+        phone: bpRow?.contact_phone || upData?.phone || listerSnapshot?.phone || undefined,
+        whatsapp: bpRow?.whatsapp_number || upData?.whatsapp || listerSnapshot?.whatsapp || undefined,
+        address: bpRow?.address || upData?.address || listerSnapshot?.address || undefined,
       });
     };
+
     fetchListerProfile();
     return () => { cancelled = true; };
-  }, [property?.listedByUserId]);
+  }, [property?.id, property?.listedByUserId, property?.lister]);
 
   const distance =
     userLocation && property
@@ -190,11 +222,6 @@ export default function PropertyDetailScreen() {
   };
 
   const sendMessageToOwner = async (body: string) => {
-    if (!property.listedByUserId) {
-      Alert.alert('Message unavailable', 'This listing is missing owner details.');
-      return;
-    }
-
     const { data: authData, error: authError } = await supabaseClient.auth.getUser();
     const authUser = authData.user;
     const senderId = authUser?.id || user?.id;
@@ -207,13 +234,27 @@ export default function PropertyDetailScreen() {
     setIsSendingMessage(true);
 
     try {
+      const { data: propertyData } = await supabaseClient
+        .from('properties')
+        .select('user_id')
+        .eq('id', property.id)
+        .maybeSingle();
+
+      const recipientId = propertyData?.user_id || ownerUserId || property.listedByUserId;
+
+      if (!recipientId) {
+        setIsSendingMessage(false);
+        Alert.alert('Message unavailable', 'This listing is missing owner details.');
+        return;
+      }
+
       // Find or create conversation between sender and owner for this property
       const { data: existingConv, error: convQueryError } = await supabaseClient
         .from('conversations')
         .select('id')
         .eq('property_id', property.id)
-        .or(`and(user_1_id.eq.${senderId},user_2_id.eq.${property.listedByUserId}),and(user_1_id.eq.${property.listedByUserId},user_2_id.eq.${senderId})`)
-        .single();
+        .or(`and(user_1_id.eq.${senderId},user_2_id.eq.${recipientId}),and(user_1_id.eq.${recipientId},user_2_id.eq.${senderId})`)
+        .maybeSingle();
 
       let conversationId: string;
 
@@ -221,13 +262,19 @@ export default function PropertyDetailScreen() {
         // Use existing conversation
         conversationId = existingConv.id;
       } else {
+        if (convQueryError) {
+          setIsSendingMessage(false);
+          Alert.alert('Unable to start conversation', convQueryError.message || 'Try again later.');
+          return;
+        }
+
         // Create new conversation
         const { data: newConv, error: createError } = await supabaseClient
           .from('conversations')
           .insert({
             property_id: property.id,
             user_1_id: senderId,
-            user_2_id: property.listedByUserId,
+            user_2_id: recipientId,
           })
           .select('id')
           .single();
