@@ -20,7 +20,7 @@ import Colors from '@/constants/colors';
 
 export default function SignupScreen() {
   const router = useRouter();
-  const { signup, isLoading, error, clearError } = useAuthStore();
+  const { signup, isLoading, error, signupMessage, clearError } = useAuthStore();
   
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -115,10 +115,11 @@ export default function SignupScreen() {
     if (isNameValid && isEmailValid && isPasswordValid && isConfirmPasswordValid && isPhoneValid) {
       const success = await signup(name, email, password, phone, whatsapp || phone);
       if (success) {
+        const allowsImmediateAccess = signupMessage?.toLowerCase().includes('immediately') || signupMessage?.toLowerCase().includes('use the app immediately');
         Alert.alert(
-          'Success!',
-          'Your account has been created successfully. You are now logged in.',
-          [{ text: 'OK', onPress: () => router.replace('/') }]
+          allowsImmediateAccess ? 'Account created' : 'Check your email',
+          signupMessage || 'Your account has been created. Open the confirmation email, confirm your address, then sign in with your credentials.',
+          [{ text: 'OK', onPress: () => router.replace(allowsImmediateAccess ? '/(tabs)' as any : '/login' as any) }]
         );
       }
     }

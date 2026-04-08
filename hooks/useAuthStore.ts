@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { trpcClient } from '@/lib/trpc';
 import { supabaseClient } from '@/lib/supabase';
+import { normalizeEmail } from '@/utils/password-reset';
 
 export interface User {
   id: string;
@@ -25,7 +25,6 @@ interface Session {
 
 interface PasswordResetState {
   email: string | null;
-  phoneNumber: string | null;
   resetToken: string | null;
   step: 'request' | 'verify' | 'complete' | null; // Which step of reset flow
 }
@@ -36,6 +35,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  signupMessage: string | null;
   passwordReset: PasswordResetState;
   
   // Actions
@@ -44,9 +44,10 @@ interface AuthState {
   logout: () => void;
   clearError: () => void;
   updateProfile: (updates: Partial<User>) => void;
+  resendSignupConfirmation: (email: string) => Promise<boolean>;
   
   // Password Reset Actions
-  requestPasswordReset: (email: string, phoneNumber: string) => Promise<boolean>;
+  requestPasswordReset: (email: string) => Promise<boolean>;
   verifyResetPin: (email: string, pinCode: string) => Promise<boolean>;
   confirmPasswordReset: (email: string, pinCode: string, newPassword: string) => Promise<boolean>;
   cancelPasswordReset: () => void;
@@ -55,29 +56,56 @@ interface AuthState {
 const getErrorMessage = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
 
-const shouldUseSupabaseFallback = (error: unknown) => {
-  const message = getErrorMessage(error, '').toLowerCase();
-  return (
-    message.includes('json parse error') ||
-    message.includes('unexpected character') ||
-    message.includes('not found') ||
-    message.includes('network request failed') ||
-    message.includes('fetch failed')
-  );
-};
+const getPasswordResetErrorMessage = (error: unknown, fallback: string) => {
+  const message = getErrorMessage(error, fallback);
+  const lowerMessage = message.toLowerCase();
 
-const syncSupabaseClientSession = async (session: Session) => {
-  if (!session.accessToken || !session.refreshToken) {
-    return;
+  if (lowerMessage.includes('email rate limit exceeded')) {
+    return 'Supabase password reset is being throttled. Configure custom SMTP and increase Auth rate limits in the Supabase dashboard, then try again.';
   }
 
-  const { error } = await supabaseClient.auth.setSession({
-    access_token: session.accessToken,
-    refresh_token: session.refreshToken,
-  });
+  if (lowerMessage.includes('for security purposes') || lowerMessage.includes('wait')) {
+    return 'Please wait a moment before requesting another reset code.';
+  }
+
+  return message;
+};
+
+const SIGNUP_CONFIRM_REDIRECT_URL = 'myapp://login?emailConfirmed=1';
+
+const getSignupErrorMessage = (error: unknown, fallback: string) => {
+  const message = getErrorMessage(error, fallback);
+  const lowerMessage = message.toLowerCase();
+
+  if (lowerMessage.includes('email rate limit exceeded')) {
+    return 'Supabase confirmation email sending is being throttled right now. Please wait a bit before trying again.';
+  }
+
+  if (lowerMessage.includes('email not confirmed') || lowerMessage.includes('confirm your email')) {
+    return 'Please confirm your email before signing in.';
+  }
+
+  return message;
+};
+
+const upsertOwnUserProfile = async (userId: string, email: string, name?: string, phone?: string, whatsapp?: string) => {
+  const { error } = await supabaseClient
+    .from('user_profiles')
+    .upsert(
+      {
+        id: userId,
+        email,
+        name: name || '',
+        phone: phone || null,
+        whatsapp: whatsapp || null,
+      },
+      {
+        onConflict: 'id',
+      }
+    );
 
   if (error) {
-    throw new Error(`Supabase session sync failed: ${error.message}`);
+    throw new Error(`Failed to create user profile: ${error.message}`);
   }
 };
 
@@ -89,9 +117,9 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       isLoading: false,
       error: null,
+      signupMessage: null,
       passwordReset: {
         email: null,
-        phoneNumber: null,
         resetToken: null,
         step: null,
       },
@@ -100,238 +128,160 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
         
         try {
-          const response = await trpcClient.auth.login.mutate({ 
-            email, 
-            password 
+          const { data, error: loginError } = await supabaseClient.auth.signInWithPassword({
+            email,
+            password,
           });
-          
-          if (response.success) {
-            const session: Session = {
-              accessToken: response.session.accessToken || '',
-              refreshToken: response.session.refreshToken || '',
-              expiresIn: response.session.expiresIn || 3600,
-              expiresAt: response.session.expiresAt || Date.now() + 3600000,
-            };
-            
-            set({ 
-              user: response.user,
-              session,
-              isAuthenticated: true,
-              isLoading: false,
-              error: null
-            });
 
-            await syncSupabaseClientSession(session);
-            
-            // Store tokens in secure storage
-            await AsyncStorage.setItem('auth_token', session.accessToken);
-            await AsyncStorage.setItem('refresh_token', session.refreshToken);
-            
-            return true;
+          if (loginError || !data.user || !data.session) {
+            set({
+              isLoading: false,
+              error: loginError?.message || 'Login failed',
+            });
+            return false;
           }
-          
-          return false;
+
+          if (!data.user.email_confirmed_at) {
+            await supabaseClient.auth.signOut({ scope: 'local' }).catch(() => {
+              // Ignore local cleanup failures after blocked login.
+            });
+            set({
+              isLoading: false,
+              error: 'Please confirm your email before signing in.',
+            });
+            return false;
+          }
+
+          const { data: profile } = await supabaseClient
+            .from('user_profiles')
+            .select('name, avatar_url, company_name, description, phone, whatsapp, address')
+            .eq('id', data.user.id)
+            .maybeSingle();
+
+          if (!profile) {
+            await upsertOwnUserProfile(
+              data.user.id,
+              data.user.email || email,
+              (data.user.user_metadata?.name as string | undefined) || 'User',
+              data.user.user_metadata?.phone as string | undefined,
+              data.user.user_metadata?.whatsapp as string | undefined,
+            );
+          }
+
+          const session: Session = {
+            accessToken: data.session.access_token,
+            refreshToken: data.session.refresh_token,
+            expiresIn: data.session.expires_in || 3600,
+            expiresAt: (data.session.expires_at || Math.floor(Date.now() / 1000) + 3600) * 1000,
+          };
+
+          set({
+            user: {
+              id: data.user.id,
+              email: data.user.email || email,
+              name: profile?.name || data.user.user_metadata?.name || 'User',
+              avatar: profile?.avatar_url || undefined,
+              companyName: profile?.company_name || undefined,
+              description: profile?.description || undefined,
+              phone: profile?.phone || undefined,
+              whatsapp: profile?.whatsapp || undefined,
+              address: profile?.address || undefined,
+            },
+            session,
+            isAuthenticated: true,
+            isLoading: false,
+            error: null,
+          });
+
+          await AsyncStorage.setItem('auth_token', session.accessToken);
+          await AsyncStorage.setItem('refresh_token', session.refreshToken);
+
+          return true;
         } catch (error) {
-          if (!shouldUseSupabaseFallback(error)) {
-            set({ 
-              isLoading: false, 
-              error: getErrorMessage(error, 'Login failed')
-            });
-            return false;
-          }
-
-          try {
-            const { data, error: loginError } = await supabaseClient.auth.signInWithPassword({
-              email,
-              password,
-            });
-
-            if (loginError || !data.user || !data.session) {
-              set({
-                isLoading: false,
-                error: loginError?.message || 'Login failed',
-              });
-              return false;
-            }
-
-            const { data: profile } = await supabaseClient
-              .from('user_profiles')
-              .select('name, avatar_url, company_name, description, phone, whatsapp, address')
-              .eq('id', data.user.id)
-              .maybeSingle();
-
-            const session: Session = {
-              accessToken: data.session.access_token,
-              refreshToken: data.session.refresh_token,
-              expiresIn: data.session.expires_in || 3600,
-              expiresAt: (data.session.expires_at || Math.floor(Date.now() / 1000) + 3600) * 1000,
-            };
-
-            set({
-              user: {
-                id: data.user.id,
-                email: data.user.email || email,
-                name: profile?.name || data.user.user_metadata?.name || 'User',
-                avatar: profile?.avatar_url || undefined,
-                companyName: profile?.company_name || undefined,
-                description: profile?.description || undefined,
-                phone: profile?.phone || undefined,
-                whatsapp: profile?.whatsapp || undefined,
-                address: profile?.address || undefined,
-              },
-              session,
-              isAuthenticated: true,
-              isLoading: false,
-              error: null,
-            });
-
-            await AsyncStorage.setItem('auth_token', session.accessToken);
-            await AsyncStorage.setItem('refresh_token', session.refreshToken);
-
-            return true;
-          } catch (fallbackError) {
-            set({
-              isLoading: false,
-              error: getErrorMessage(fallbackError, 'Login failed'),
-            });
-            return false;
-          }
+          set({ 
+            isLoading: false, 
+            error: getErrorMessage(error, 'Login failed')
+          });
+          return false;
         }
       },
       
       signup: async (name: string, email: string, password: string, phone?: string, whatsapp?: string) => {
-        set({ isLoading: true, error: null });
+        set({ isLoading: true, error: null, signupMessage: null });
         
         try {
-          const response = await trpcClient.auth.signup.mutate({ 
-            name, 
-            email, 
+          const normalizedEmail = normalizeEmail(email);
+          const { data, error: signupError } = await supabaseClient.auth.signUp({
+            email: normalizedEmail,
             password,
-            phone,
-            whatsapp,
-          });
-          
-          if (response.success) {
-            const session: Session = {
-              accessToken: response.session.accessToken || '',
-              refreshToken: response.session.refreshToken || '',
-              expiresIn: response.session.expiresIn || 3600,
-              expiresAt: response.session.expiresAt || Date.now() + 3600000,
-            };
-            
-            set({ 
-              user: response.user,
-              session,
-              isAuthenticated: true,
-              isLoading: false,
-              error: null
-            });
-            
-            // Store tokens in secure storage
-            await AsyncStorage.setItem('auth_token', session.accessToken);
-            await AsyncStorage.setItem('refresh_token', session.refreshToken);
-            
-            return true;
-          }
-          
-          return false;
-        } catch (error) {
-          if (!shouldUseSupabaseFallback(error)) {
-            set({ 
-              isLoading: false, 
-              error: getErrorMessage(error, 'Signup failed')
-            });
-            return false;
-          }
-
-          try {
-            const { data, error: signupError } = await supabaseClient.auth.signUp({
-              email,
-              password,
-              options: {
-                emailRedirectTo: 'myapp://login',
-                data: {
-                  name,
-                  phone,
-                  whatsapp,
-                },
+            options: {
+              emailRedirectTo: SIGNUP_CONFIRM_REDIRECT_URL,
+              data: {
+                name,
+                phone,
+                whatsapp,
               },
-            });
+            },
+          });
 
-            if (signupError || !data.user) {
-              set({
-                isLoading: false,
-                error: signupError?.message || 'Signup failed',
-              });
-              return false;
-            }
-
-            const establishSession = async (sessionData: any) => {
-              await supabaseClient.from('user_profiles').upsert(
-                {
-                  id: data.user!.id,
-                  email,
-                  name,
-                  phone,
-                  whatsapp,
-                },
-                { onConflict: 'id' }
-              );
-
-              const session: Session = {
-                accessToken: sessionData.access_token,
-                refreshToken: sessionData.refresh_token,
-                expiresIn: sessionData.expires_in || 3600,
-                expiresAt: (sessionData.expires_at || Math.floor(Date.now() / 1000) + 3600) * 1000,
-              };
-
-              set({
-                user: {
-                  id: data.user!.id,
-                  email,
-                  name,
-                  phone,
-                  whatsapp,
-                },
-                session,
-                isAuthenticated: true,
-                isLoading: false,
-                error: null,
-              });
-
-              await syncSupabaseClientSession(session);
-
-              await AsyncStorage.setItem('auth_token', session.accessToken);
-              await AsyncStorage.setItem('refresh_token', session.refreshToken);
-            };
-
-            if (data.session) {
-              await establishSession(data.session);
-              return true;
-            }
-
-            const { data: loginData, error: loginAfterSignupError } = await supabaseClient.auth.signInWithPassword({
-              email,
-              password,
-            });
-
-            if (loginAfterSignupError || !loginData.session) {
-              set({
-                isLoading: false,
-                error: loginAfterSignupError?.message || 'Account created, but login failed. Please sign in again.',
-              });
-              return false;
-            }
-
-            await establishSession(loginData.session);
-            return true;
-          } catch (fallbackError) {
+          if (signupError || !data.user) {
             set({
               isLoading: false,
-              error: getErrorMessage(fallbackError, 'Signup failed'),
+              error: getSignupErrorMessage(signupError, 'Signup failed'),
+              signupMessage: null,
             });
             return false;
           }
+
+          set({
+            user: null,
+            session: null,
+            isAuthenticated: false,
+            isLoading: false,
+            error: null,
+            signupMessage: 'Your account has been created. Open the confirmation email, confirm your address, then sign in with your credentials.',
+          });
+
+          return true;
+        } catch (error) {
+          set({
+            isLoading: false,
+            error: getSignupErrorMessage(error, 'Signup failed'),
+            signupMessage: null,
+          });
+          return false;
+        }
+      },
+
+      resendSignupConfirmation: async (email: string) => {
+        set({ isLoading: true, error: null });
+
+        try {
+          const normalizedEmail = normalizeEmail(email);
+          const { error } = await supabaseClient.auth.resend({
+            type: 'signup',
+            email: normalizedEmail,
+            options: {
+              emailRedirectTo: SIGNUP_CONFIRM_REDIRECT_URL,
+            },
+          });
+
+          if (error) {
+            throw error;
+          }
+
+          set({
+            isLoading: false,
+            error: null,
+          });
+
+          return true;
+        } catch (error) {
+          set({
+            isLoading: false,
+            error: getSignupErrorMessage(error, 'Failed to resend confirmation email'),
+          });
+          return false;
         }
       },
       
@@ -348,7 +298,6 @@ export const useAuthStore = create<AuthState>()(
           error: null,
           passwordReset: {
             email: null,
-            phoneNumber: null,
             resetToken: null,
             step: null,
           }
@@ -366,34 +315,34 @@ export const useAuthStore = create<AuthState>()(
         };
       }),
       
-      clearError: () => set({ error: null }),
+      clearError: () => set({ error: null, signupMessage: null }),
       
       // Password Reset - Step 1: Request PIN
-      requestPasswordReset: async (email: string, phoneNumber: string) => {
+      requestPasswordReset: async (email: string) => {
         set({ isLoading: true, error: null });
         
         try {
-          const response = await trpcClient.auth.passwordReset.mutate({
-            email,
-            phoneNumber,
+          const normalizedEmail = normalizeEmail(email);
+          const { error } = await supabaseClient.auth.resetPasswordForEmail(normalizedEmail, {
+            redirectTo: 'myapp://reset-password',
           });
-          
-          if (response.success) {
-            set({
-              isLoading: false,
-              passwordReset: {
-                email,
-                phoneNumber,
-                resetToken: null,
-                step: 'verify', // Move to PIN verification step
-              },
-            });
-            return true;
+
+          if (error) {
+            throw error;
           }
-          
-          return false;
+
+          set({
+            isLoading: false,
+            passwordReset: {
+              email: normalizedEmail,
+              resetToken: null,
+              step: 'verify',
+            },
+          });
+
+          return true;
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'Failed to request password reset';
+          const message = getPasswordResetErrorMessage(error, 'Failed to request password reset');
           set({
             isLoading: false,
             error: message,
@@ -407,26 +356,36 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
         
         try {
-          const response = await trpcClient.auth.verifyPin.mutate({
-            email,
-            pinCode,
+          const normalizedEmail = normalizeEmail(email);
+          const { data, error } = await supabaseClient.auth.verifyOtp({
+            email: normalizedEmail,
+            token: pinCode,
+            type: 'recovery',
           });
-          
-          if (response.success) {
-            set((state) => ({
-              isLoading: false,
-              passwordReset: {
-                ...state.passwordReset,
-                resetToken: response.resetToken,
-                step: 'complete', // Move to password reset step
-              },
-            }));
-            return true;
+
+          if (error) {
+            throw error;
           }
-          
-          return false;
+
+          if (!data.session) {
+            throw new Error('Verification failed. Please request a new code.');
+          }
+
+          await AsyncStorage.setItem('auth_token', data.session.access_token);
+          await AsyncStorage.setItem('refresh_token', data.session.refresh_token);
+
+          set({
+            isLoading: false,
+            passwordReset: {
+              email: normalizedEmail,
+              resetToken: data.session.access_token,
+              step: 'complete',
+            },
+          });
+
+          return true;
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'Invalid or expired PIN';
+          const message = getPasswordResetErrorMessage(error, 'Invalid or expired PIN');
           set({
             isLoading: false,
             error: message,
@@ -440,29 +399,34 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
         
         try {
-          const response = await trpcClient.auth.confirmReset.mutate({
-            email,
-            pinCode,
-            newPassword,
+          const { error } = await supabaseClient.auth.updateUser({
+            password: newPassword,
           });
-          
-          if (response.success) {
-            set({
-              isLoading: false,
-              error: null,
-              passwordReset: {
-                email: null,
-                phoneNumber: null,
-                resetToken: null,
-                step: null,
-              },
-            });
-            return true;
+
+          if (error) {
+            throw error;
           }
-          
-          return false;
+
+          await supabaseClient.auth.signOut({ scope: 'local' }).catch(() => {
+            // Ignore cleanup failures after successful password update.
+          });
+
+          await AsyncStorage.removeItem('auth_token');
+          await AsyncStorage.removeItem('refresh_token');
+
+          set({
+            isLoading: false,
+            error: null,
+            passwordReset: {
+              email: null,
+              resetToken: null,
+              step: null,
+            },
+          });
+
+          return true;
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'Failed to reset password';
+          const message = getPasswordResetErrorMessage(error, 'Failed to reset password');
           set({
             isLoading: false,
             error: message,
@@ -473,10 +437,14 @@ export const useAuthStore = create<AuthState>()(
       
       // Cancel password reset flow
       cancelPasswordReset: () => {
-        set((state) => ({
+        supabaseClient.auth.signOut({ scope: 'local' }).catch(() => {
+          // Ignore local-only cleanup failures.
+        });
+        AsyncStorage.removeItem('auth_token');
+        AsyncStorage.removeItem('refresh_token');
+        set(() => ({
           passwordReset: {
             email: null,
-            phoneNumber: null,
             resetToken: null,
             step: null,
           },

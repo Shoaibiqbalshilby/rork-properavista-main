@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Alert } from 'react-native';
 import { 
   StyleSheet, 
   View, 
@@ -12,22 +13,68 @@ import {
   ActivityIndicator
 } from 'react-native';
 import { Image } from 'expo-image';
-import { useRouter, Link } from 'expo-router';
+import { useRouter, Link, useLocalSearchParams } from 'expo-router';
+import type { EmailOtpType } from '@supabase/supabase-js';
 import { Eye, EyeOff, Mail, Lock } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import PasswordResetCard from '@/components/PasswordResetCard';
 import { useAuthStore } from '@/hooks/useAuthStore';
+import { supabaseClient } from '@/lib/supabase';
 import Colors from '@/constants/colors';
 
 export default function LoginScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ emailConfirmed?: string; token_hash?: string; type?: string }>();
   const insets = useSafeAreaInsets();
-  const { login, isLoading, error } = useAuthStore();
+  const { login, resendSignupConfirmation, isLoading, error, clearError, cancelPasswordReset } = useAuthStore();
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  const [showResetFlow, setShowResetFlow] = useState(false);
+  const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const verifySignupConfirmation = async () => {
+      if (!params.token_hash || !params.type) {
+        if (params.emailConfirmed === '1') {
+          const message = 'Congrests, email has been confirmed. Now you can login into the app using your credentials.';
+          setConfirmationMessage(message);
+          Alert.alert('Congrats', message);
+        }
+        return;
+      }
+
+      const { error } = await supabaseClient.auth.verifyOtp({
+        token_hash: String(params.token_hash),
+        type: String(params.type) as EmailOtpType,
+      });
+
+      if (cancelled) {
+        return;
+      }
+
+      if (error) {
+        setConfirmationMessage('This confirmation link is invalid or expired. Request a new confirmation email and try again.');
+        return;
+      }
+
+      const message = 'Congrests, email has been confirmed. Now you can login into the app using your credentials.';
+      setConfirmationMessage(message);
+      Alert.alert('Congrats', message);
+      router.replace('/login?emailConfirmed=1');
+    };
+
+    verifySignupConfirmation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [params.emailConfirmed, params.token_hash, params.type, router]);
   
   const validateEmail = () => {
     if (!email) {
@@ -74,6 +121,20 @@ export default function LoginScreen() {
       router.replace('/');
     }
   };
+
+  const shouldShowResendConfirmation = !!email && (error?.toLowerCase().includes('confirm your email') || false);
+
+  const handleResendConfirmation = async () => {
+    const isEmailValid = validateEmail();
+    if (!isEmailValid) {
+      return;
+    }
+
+    const success = await resendSignupConfirmation(email);
+    if (success) {
+      Alert.alert('Confirmation email sent', 'Check your inbox and spam folder for the new confirmation email.');
+    }
+  };
   
   return (
     <KeyboardAvoidingView
@@ -99,8 +160,14 @@ export default function LoginScreen() {
         <View style={styles.formContainer}>
           <Text style={styles.title}>Welcome Back</Text>
           <Text style={styles.subtitle}>Sign in to your account</Text>
+
+          {confirmationMessage ? (
+            <View style={styles.successContainer}>
+              <Text style={styles.successText}>{confirmationMessage}</Text>
+            </View>
+          ) : null}
           
-          {error && (
+          {error && !showResetFlow && (
             <View style={styles.errorContainer}>
               <Text style={styles.errorText}>{error}</Text>
             </View>
@@ -153,39 +220,64 @@ export default function LoginScreen() {
           
           <TouchableOpacity 
             style={styles.forgotPassword}
-            onPress={() => router.push('/reset-password' as any)}
+            onPress={() => {
+              clearError();
+              cancelPasswordReset();
+              setShowResetFlow(true);
+            }}
           >
             <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
           </TouchableOpacity>
-          
-          <Pressable 
-            style={styles.loginButton} 
-            onPress={handleLogin}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text style={styles.loginButtonText}>Sign In</Text>
-            )}
-          </Pressable>
-          
-          <Pressable 
-            style={styles.demoButton} 
-            onPress={handleDemoLogin}
-            disabled={isLoading}
-          >
-            <Text style={styles.demoButtonText}>Demo Login</Text>
-          </Pressable>
-          
-          <View style={styles.signupContainer}>
-            <Text style={styles.signupText}>Don&apos;t have an account? </Text>
-            <Link href={"/signup" as any} asChild replace>
-              <TouchableOpacity>
-                <Text style={styles.signupLink}>Sign Up</Text>
-              </TouchableOpacity>
-            </Link>
-          </View>
+
+          {showResetFlow ? (
+            <PasswordResetCard
+              initialEmail={email}
+              showTitle={false}
+              onCancel={() => setShowResetFlow(false)}
+              onComplete={() => setShowResetFlow(false)}
+            />
+          ) : (
+            <>
+              <Pressable 
+                style={styles.loginButton} 
+                onPress={handleLogin}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <Text style={styles.loginButtonText}>Sign In</Text>
+                )}
+              </Pressable>
+              
+              <Pressable 
+                style={styles.demoButton} 
+                onPress={handleDemoLogin}
+                disabled={isLoading}
+              >
+                <Text style={styles.demoButtonText}>Demo Login</Text>
+              </Pressable>
+
+              {shouldShowResendConfirmation ? (
+                <Pressable
+                  style={styles.resendButton}
+                  onPress={handleResendConfirmation}
+                  disabled={isLoading}
+                >
+                  <Text style={styles.resendButtonText}>Resend Confirmation Email</Text>
+                </Pressable>
+              ) : null}
+              
+              <View style={styles.signupContainer}>
+                <Text style={styles.signupText}>Don&apos;t have an account? </Text>
+                <Link href={"/signup" as any} asChild replace>
+                  <TouchableOpacity>
+                    <Text style={styles.signupLink}>Sign Up</Text>
+                  </TouchableOpacity>
+                </Link>
+              </View>
+            </>
+          )}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -245,6 +337,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 16,
   },
+  successContainer: {
+    backgroundColor: 'rgba(34, 197, 94, 0.12)',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
   inputGroup: {
     marginBottom: 16,
   },
@@ -283,6 +381,10 @@ const styles = StyleSheet.create({
     color: Colors.light.error,
     marginTop: 4,
   },
+  successText: {
+    fontSize: 12,
+    color: '#166534',
+  },
   forgotPassword: {
     alignSelf: 'flex-end',
     marginBottom: 24,
@@ -315,6 +417,16 @@ const styles = StyleSheet.create({
   demoButtonText: {
     color: Colors.light.primary,
     fontSize: 16,
+    fontWeight: '600',
+  },
+  resendButton: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    marginTop: 4,
+  },
+  resendButtonText: {
+    color: Colors.light.primary,
+    fontSize: 15,
     fontWeight: '600',
   },
   signupContainer: {

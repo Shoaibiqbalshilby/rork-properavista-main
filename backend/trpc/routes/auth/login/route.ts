@@ -26,12 +26,29 @@ export default publicProcedure
         throw new Error("Authentication failed");
       }
 
+      if (!data.user.email_confirmed_at) {
+        throw new Error('Please confirm your email before signing in.');
+      }
+
       // Fetch user profile
       const { data: profileData, error: profileError } = await supabaseAdmin
         .from("user_profiles")
         .select("*")
         .eq("id", data.user.id)
         .single();
+
+      if (profileError?.code === 'PGRST116') {
+        await supabaseAdmin.from('user_profiles').upsert(
+          {
+            id: data.user.id,
+            email: data.user.email!,
+            name: (data.user.user_metadata?.name as string | undefined) || '',
+            phone: (data.user.user_metadata?.phone as string | undefined) || null,
+            whatsapp: (data.user.user_metadata?.whatsapp as string | undefined) || null,
+          },
+          { onConflict: 'id' }
+        );
+      }
 
       if (profileError && profileError.code !== "PGRST116") {
         console.error("Profile fetch error:", profileError);

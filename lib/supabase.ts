@@ -29,12 +29,21 @@ export const supabaseClient = createClient(
   {
     auth: {
       storage: AsyncStorage,
+      storageKey: 'properavista-auth-v2',
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
     },
   }
 );
+
+supabaseClient.auth.getSession().then(({ error }) => {
+  if (error?.message?.toLowerCase().includes('refresh token')) {
+    supabaseClient.auth.signOut({ scope: 'local' }).catch(() => {
+      // Ignore cleanup failures for invalid local sessions.
+    });
+  }
+});
 
 const createUnavailableAdminClient = () =>
   new Proxy(

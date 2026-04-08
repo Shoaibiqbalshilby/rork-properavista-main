@@ -261,7 +261,10 @@ Options:
 - Africa's Talking (Africa) - https://africastalking.com
 - Vonage (worldwide) - https://vonage.com
 
-Update: `utils/password-reset.ts` → `sendPinToSms()`
+Configured in [utils/password-reset.ts](utils/password-reset.ts):
+- `TERMII_API_KEY` and `TERMII_SENDER_ID` for Termii
+- Optional `TERMII_CHANNEL` for Termii, defaults to `generic`
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_PHONE_NUMBER` for Twilio
 
 ### Email Service (Backup)
 Options:
@@ -270,7 +273,31 @@ Options:
 - Brevo (Sendinblue) - https://brevo.com
 - Mailgun - https://mailgun.com
 
-Update: `utils/password-reset.ts` → `sendPinToEmail()`
+Configured in [utils/password-reset.ts](utils/password-reset.ts):
+- `RESEND_API_KEY` and `PASSWORD_RESET_EMAIL_FROM` for Resend
+- `SENDGRID_API_KEY` and `PASSWORD_RESET_EMAIL_FROM` for SendGrid
+
+### Environment Variables
+
+Add the provider variables to the backend runtime environment before testing in production:
+
+```bash
+# Email
+RESEND_API_KEY=
+SENDGRID_API_KEY=
+PASSWORD_RESET_EMAIL_FROM=no-reply@yourdomain.com
+
+# SMS
+TERMII_API_KEY=
+TERMII_SENDER_ID=Propera
+TERMII_CHANNEL=generic
+
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_PHONE_NUMBER=+1234567890
+```
+
+In development, if no provider is configured, the app falls back to logging the PIN in the server console. In production, at least one email or SMS provider must be configured or the reset request will fail.
 
 ---
 
