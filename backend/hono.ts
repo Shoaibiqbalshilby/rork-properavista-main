@@ -176,6 +176,17 @@ app.post("/auth/password-reset/confirm", async (c) => {
 app.get('/auth/confirm-signup', async (c) => {
   const tokenHash = c.req.query('token_hash');
   const type = (c.req.query('type') || 'signup') as EmailOtpType;
+  const emailConfirmed = c.req.query('emailConfirmed');
+
+  if (!tokenHash && emailConfirmed === '1') {
+    return c.html(
+      renderConfirmationPage(
+        'Confirmation Successful',
+        'Your email address has been confirmed successfully. You can now sign in with your credentials.',
+        'Open Properavista'
+      )
+    );
+  }
 
   if (!tokenHash) {
     return c.html(
@@ -210,8 +221,9 @@ app.get('/auth/confirm-signup', async (c) => {
 
     return c.html(
       renderConfirmationPage(
-        'Congrats, your email has been confirmed',
-        'You can now login into the app using your credentials.'
+        'Confirmation Successful',
+        'Your email address has been confirmed successfully. You can now sign in with your credentials.',
+        'Open Properavista'
       )
     );
   } catch {

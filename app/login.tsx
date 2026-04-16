@@ -38,13 +38,13 @@ export default function LoginScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    const successMessage = 'Confirmation is successful. You can now sign in with your credentials.';
 
     const verifySignupConfirmation = async () => {
       if (!params.token_hash || !params.type) {
         if (params.emailConfirmed === '1') {
-          const message = 'Congrests, email has been confirmed. Now you can login into the app using your credentials.';
-          setConfirmationMessage(message);
-          Alert.alert('Congrats', message);
+          setConfirmationMessage(successMessage);
+          Alert.alert('Confirmation Successful', successMessage);
         }
         return;
       }
@@ -63,9 +63,8 @@ export default function LoginScreen() {
         return;
       }
 
-      const message = 'Congrests, email has been confirmed. Now you can login into the app using your credentials.';
-      setConfirmationMessage(message);
-      Alert.alert('Congrats', message);
+      setConfirmationMessage(successMessage);
+      Alert.alert('Confirmation Successful', successMessage);
       router.replace('/login?emailConfirmed=1');
     };
 

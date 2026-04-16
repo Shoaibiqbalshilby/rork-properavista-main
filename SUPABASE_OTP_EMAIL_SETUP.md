@@ -84,6 +84,15 @@ If the user does not receive the code:
 
 ## Signup Confirmation Template
 
-If your signup confirmation email is still opening `localhost:3000`, replace the Confirm Signup template in Supabase with [supabase/signup-confirmation-template.html](supabase/signup-confirmation-template.html).
+If your signup confirmation email is opening an invalid page or a broken app link, replace the Confirm Signup template in Supabase with [supabase/signup-confirmation-template.html](supabase/signup-confirmation-template.html).
 
-That template sends users through `https://properavista.com/api/auth/confirm-signup`, which verifies the token, redirects them to Properavista, and triggers a second confirmation-complete email.
+Required dashboard checks:
+
+1. Open Supabase Dashboard.
+2. Go to Authentication.
+3. Open URL Configuration and add `myapp://login?emailConfirmed=1` to Additional Redirect URLs.
+4. Open Email Templates.
+5. Open Confirm Signup.
+6. Replace the HTML with the content from [supabase/signup-confirmation-template.html](supabase/signup-confirmation-template.html).
+
+With the current app code, Supabase now sends the user through its standard HTTPS confirmation URL first, then redirects to `myapp://login?emailConfirmed=1`. That avoids the invalid webpage issue and lets the app show `Confirmation is successful` after the email has been verified.

@@ -45,13 +45,18 @@ bun start
    - Phone: "08012345678"
    - WhatsApp: "08087654321"
 4. Click Sign Up
-5. You should be logged in automatically
+5. You should see a message telling you to confirm your email
+6. Open the confirmation email and click the confirmation button
+7. The Properavista app should open and show `Confirmation is successful`
+8. Sign in with the same email and password
 
 ### Expected Results
 - ✅ User created in Supabase Auth
 - ✅ User profile created in `user_profiles` table
-- ✅ User logged in with session tokens
-- ✅ Session stored in AsyncStorage
+- ✅ Signup screen shows a confirmation-email instruction message
+- ✅ Email button opens a valid HTTPS confirmation flow
+- ✅ Properavista opens and shows `Confirmation is successful`
+- ✅ User can sign in after confirming the email
 
 ## Step 6: Test Login
 
@@ -100,8 +105,10 @@ bun start
 ### Sign Up
 - [ ] User created in Supabase Auth
 - [ ] User profile created with all fields
-- [ ] User automatically logged in
-- [ ] Session tokens stored
+- [ ] Confirmation email is delivered
+- [ ] Confirmation button opens a valid page
+- [ ] Properavista shows the confirmation success message
+- [ ] User can sign in after confirming the email
 
 ### Login
 - [ ] User can login with email/password
