@@ -24,6 +24,7 @@ interface PropertyState {
   getPropertiesByUser: (userId: string) => Property[];
   setProperties: (properties: Property[]) => void;
   upsertProperty: (property: Property) => void;
+  resetForSignOut: () => void;
 }
 
 export const usePropertyStore = create<PropertyState>()(
@@ -204,6 +205,12 @@ export const usePropertyStore = create<PropertyState>()(
         nextProperties[existingIndex] = nextProperty;
 
         return { properties: nextProperties };
+      }),
+
+      resetForSignOut: () => set({
+        properties: mockProperties,
+        favorites: [],
+        filter: {},
       }),
     }),
     {

@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabaseClient } from '@/lib/supabase';
+import { getApiBaseUrl } from '@/lib/trpc';
+import { useLocationStore } from '@/hooks/useLocationStore';
+import { usePropertyStore } from '@/hooks/usePropertyStore';
 import { normalizeEmail } from '@/utils/password-reset';
 
 export interface User {
@@ -42,6 +45,7 @@ interface AuthState {
   login: (email: string, password: string) => Promise<boolean>;
   signup: (name: string, email: string, password: string, phone?: string, whatsapp?: string) => Promise<boolean>;
   logout: () => void;
+  deleteAccount: () => Promise<boolean>;
   clearError: () => void;
   updateProfile: (updates: Partial<User>) => void;
   resendSignupConfirmation: (email: string) => Promise<boolean>;
@@ -108,6 +112,29 @@ const upsertOwnUserProfile = async (userId: string, email: string, name?: string
     throw new Error(`Failed to create user profile: ${error.message}`);
   }
 };
+
+const clearStoredSession = async () => {
+  await AsyncStorage.removeItem('auth_token');
+  await AsyncStorage.removeItem('refresh_token');
+};
+
+const clearLocalAppState = () => {
+  usePropertyStore.getState().resetForSignOut();
+  useLocationStore.getState().clearStoredLocation();
+};
+
+const resetAuthState = () => ({
+  user: null,
+  session: null,
+  isAuthenticated: false,
+  error: null,
+  signupMessage: null,
+  passwordReset: {
+    email: null,
+    resetToken: null,
+    step: null,
+  },
+});
 
 export const useAuthStore = create<AuthState>()(
   persist(
@@ -289,19 +316,57 @@ export const useAuthStore = create<AuthState>()(
         supabaseClient.auth.signOut().catch(() => {
           // Ignore sign-out errors here and continue clearing local state.
         });
-        AsyncStorage.removeItem('auth_token');
-        AsyncStorage.removeItem('refresh_token');
-        set({ 
-          user: null,
-          session: null,
-          isAuthenticated: false,
-          error: null,
-          passwordReset: {
-            email: null,
-            resetToken: null,
-            step: null,
-          }
+        clearStoredSession().catch(() => {
+          // Ignore local storage cleanup errors on logout.
         });
+        clearLocalAppState();
+        set(resetAuthState());
+      },
+
+      deleteAccount: async () => {
+        const session = get().session;
+
+        if (!session?.accessToken) {
+          set({ error: 'You must be signed in to delete your account.' });
+          return false;
+        }
+
+        set({ isLoading: true, error: null });
+
+        try {
+          const response = await fetch(`${getApiBaseUrl()}/auth/account`, {
+            method: 'DELETE',
+            headers: {
+              Authorization: `Bearer ${session.accessToken}`,
+            },
+          });
+
+          const payload = await response.json().catch(() => ({ success: false, message: 'Account deletion failed' }));
+
+          if (!response.ok || !payload.success) {
+            throw new Error(payload.message || 'Account deletion failed');
+          }
+
+          await supabaseClient.auth.signOut({ scope: 'local' }).catch(() => {
+            // Ignore sign-out failures after the server removes the account.
+          });
+
+          await clearStoredSession();
+          clearLocalAppState();
+
+          set({
+            ...resetAuthState(),
+            isLoading: false,
+          });
+
+          return true;
+        } catch (error) {
+          set({
+            isLoading: false,
+            error: getErrorMessage(error, 'Account deletion failed'),
+          });
+          return false;
+        }
       },
 
       updateProfile: (updates) => set((state) => {
@@ -440,8 +505,9 @@ export const useAuthStore = create<AuthState>()(
         supabaseClient.auth.signOut({ scope: 'local' }).catch(() => {
           // Ignore local-only cleanup failures.
         });
-        AsyncStorage.removeItem('auth_token');
-        AsyncStorage.removeItem('refresh_token');
+        clearStoredSession().catch(() => {
+          // Ignore local-only cleanup failures.
+        });
         set(() => ({
           passwordReset: {
             email: null,

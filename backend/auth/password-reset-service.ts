@@ -178,3 +178,31 @@ export const confirmPasswordResetByPin = async (
     message: 'Password reset successfully',
   };
 };
+
+export const deleteAccountByUserId = async (userId: string) => {
+  const normalizedUserId = userId.trim();
+
+  if (!normalizedUserId) {
+    throw new Error('A valid user account is required to delete the account.');
+  }
+
+  const { error: deletePropertiesError } = await supabaseAdmin
+    .from('properties')
+    .delete()
+    .eq('user_id', normalizedUserId);
+
+  if (deletePropertiesError) {
+    throw new Error(`Failed to remove property listings: ${deletePropertiesError.message}`);
+  }
+
+  const { error: deleteUserError } = await supabaseAdmin.auth.admin.deleteUser(normalizedUserId);
+
+  if (deleteUserError) {
+    throw new Error(`Failed to delete account: ${deleteUserError.message}`);
+  }
+
+  return {
+    success: true,
+    message: 'Your account and associated data were deleted successfully.',
+  };
+};

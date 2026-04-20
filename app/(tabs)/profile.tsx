@@ -9,6 +9,7 @@ import {
   Bell, 
   HelpCircle, 
   LogOut, 
+  Trash2,
   ChevronRight,
   Home,
   Heart,
@@ -23,7 +24,7 @@ import { supabaseClient } from '@/lib/supabase';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { user, isAuthenticated, logout, updateProfile } = useAuthStore();
+  const { user, isAuthenticated, logout, deleteAccount, updateProfile, isLoading } = useAuthStore();
   const [uploadingAvatar, setUploadingAvatar] = React.useState(false);
   
   const handleLogin = () => {
@@ -46,6 +47,47 @@ export default function ProfileScreen() {
           },
           style: "destructive"
         }
+      ]
+    );
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'This permanently deletes your account, profile, property listings, and related messages. This action cannot be undone.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Confirm Deletion',
+              'Are you sure you want to permanently delete your account now?',
+              [
+                {
+                  text: 'Keep Account',
+                  style: 'cancel',
+                },
+                {
+                  text: 'Permanently Delete',
+                  style: 'destructive',
+                  onPress: async () => {
+                    const success = await deleteAccount();
+
+                    if (success) {
+                      Alert.alert('Account Deleted', 'Your account has been deleted successfully.');
+                      router.replace('/' as any);
+                    }
+                  },
+                },
+              ]
+            );
+          },
+        },
       ]
     );
   };
@@ -98,6 +140,7 @@ export default function ProfileScreen() {
     { icon: <Bell size={22} color={Colors.light.text} />, title: 'Notifications', route: '/notifications' },
     { icon: <Shield size={22} color={Colors.light.text} />, title: 'Privacy & Security', route: '/privacy' },
     { icon: <HelpCircle size={22} color={Colors.light.text} />, title: 'Help & Support', route: '/help' },
+    { icon: <Trash2 size={22} color={Colors.light.error} />, title: 'Delete Account', onPress: handleDeleteAccount, isDestructive: true, requiresAuth: true },
     { icon: <LogOut size={22} color={Colors.light.error} />, title: 'Log Out', onPress: handleLogout, isDestructive: true },
   ];
 
@@ -206,12 +249,14 @@ export default function ProfileScreen() {
           {settingsMenuItems.map((item, index) => {
             // Skip logout if not authenticated
             if (item.title === 'Log Out' && !isAuthenticated) return null;
+            if (item.requiresAuth && !isAuthenticated) return null;
             
             return (
               <Pressable 
                 key={index} 
                 style={styles.menuItem}
                 onPress={item.onPress || (() => router.push(item.route as any))}
+                disabled={item.title === 'Delete Account' && isLoading}
               >
                 <View style={styles.menuItemLeft}>
                   {item.icon}
@@ -224,7 +269,11 @@ export default function ProfileScreen() {
                     {item.title}
                   </Text>
                 </View>
-                <ChevronRight size={20} color={Colors.light.subtext} />
+                {item.title === 'Delete Account' && isLoading ? (
+                  <ActivityIndicator color={Colors.light.error} />
+                ) : (
+                  <ChevronRight size={20} color={Colors.light.subtext} />
+                )}
               </Pressable>
             );
           })}

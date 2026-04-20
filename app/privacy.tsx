@@ -1,10 +1,39 @@
 import React from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import Colors from '@/constants/colors';
+import { useAuthStore } from '@/hooks/useAuthStore';
 import { useLocationStore } from '@/hooks/useLocationStore';
 
 export default function PrivacyScreen() {
+  const router = useRouter();
   const clearStoredLocation = useLocationStore((state) => state.clearStoredLocation);
+  const { isAuthenticated, isLoading, deleteAccount } = useAuthStore();
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'Deleting your account permanently removes your profile, listings, and related data from Properavista.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: async () => {
+            const success = await deleteAccount();
+
+            if (success) {
+              Alert.alert('Account Deleted', 'Your account has been deleted successfully.');
+              router.replace('/' as any);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -43,6 +72,23 @@ export default function PrivacyScreen() {
           </Pressable>
         </View>
       </View>
+
+      {isAuthenticated ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Account Control</Text>
+          <View style={styles.card}>
+            <Pressable style={styles.rowButton} onPress={handleDeleteAccount} disabled={isLoading}>
+              <View style={styles.destructiveHeader}>
+                <Text style={styles.destructiveTitle}>Delete Account</Text>
+                {isLoading ? <ActivityIndicator color={Colors.light.error} /> : null}
+              </View>
+              <Text style={styles.rowText}>
+                Permanently delete your Properavista account and associated in-app data. This cannot be undone.
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -106,6 +152,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.light.subtext,
     lineHeight: 19,
+  },
+  destructiveHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  destructiveTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.light.error,
   },
   divider: {
     height: 1,

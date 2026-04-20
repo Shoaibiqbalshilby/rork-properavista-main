@@ -7,6 +7,7 @@ import { createContext } from "./trpc/create-context";
 import { z } from "zod";
 import {
   confirmPasswordResetByPin,
+  deleteAccountByUserId,
   requestPasswordResetByEmail,
   verifyPasswordResetPin,
 } from "./auth/password-reset-service";
@@ -30,6 +31,27 @@ const confirmPasswordResetSchema = z.object({
   resetToken: z.string().uuid().optional(),
   newPassword: z.string().min(6, "Password must be at least 6 characters"),
 });
+
+const getAuthenticatedUserId = async (authorizationHeader?: string | null) => {
+  if (!authorizationHeader?.startsWith('Bearer ')) {
+    throw new Error('You must be signed in to delete your account.');
+  }
+
+  const accessToken = authorizationHeader.slice('Bearer '.length).trim();
+
+  if (!accessToken) {
+    throw new Error('You must be signed in to delete your account.');
+  }
+
+  const publicSupabase = createPublicSupabaseClient();
+  const { data, error } = await publicSupabase.auth.getUser(accessToken);
+
+  if (error || !data.user?.id) {
+    throw new Error('Your session is no longer valid. Please sign in again.');
+  }
+
+  return data.user.id;
+};
 
 const createPublicSupabaseClient = () => {
   const url = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -169,6 +191,16 @@ app.post("/auth/password-reset/confirm", async (c) => {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Password reset failed';
+    return c.json({ success: false, message }, 400);
+  }
+});
+
+app.delete('/auth/account', async (c) => {
+  try {
+    const userId = await getAuthenticatedUserId(c.req.header('authorization'));
+    return c.json(await deleteAccountByUserId(userId));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Account deletion failed';
     return c.json({ success: false, message }, 400);
   }
 });

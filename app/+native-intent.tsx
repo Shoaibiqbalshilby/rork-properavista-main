@@ -10,8 +10,20 @@ export function redirectSystemPath({
       return search ? `/login?${search}` : '/login';
     }
 
+    if (pathname === '/reset-password' || pathname === 'reset-password') {
+      return search ? `/reset-password?${search}` : '/reset-password';
+    }
+
+    if (!pathname || pathname === '/' || pathname === '/index') {
+      return '/(tabs)';
+    }
+
+    if (initial) {
+      return '/(tabs)';
+    }
+
     return normalizedPath;
   } catch {
-    return '/';
+    return '/(tabs)';
   }
 }
