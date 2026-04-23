@@ -9,6 +9,8 @@ import { prefetchPropertyImages } from '@/utils/property-images';
 interface PropertyState {
   properties: Property[];
   favorites: string[];
+  hiddenProperties: string[];
+  blockedProperties: string[];
   filter: PropertyFilter;
   
   // Actions
@@ -25,6 +27,9 @@ interface PropertyState {
   setProperties: (properties: Property[]) => void;
   upsertProperty: (property: Property) => void;
   resetForSignOut: () => void;
+  hideProperty: (id: string) => void;
+  unhideProperty: (id: string) => void;
+  blockProperty: (id: string) => void;
 }
 
 export const usePropertyStore = create<PropertyState>()(
@@ -32,6 +37,8 @@ export const usePropertyStore = create<PropertyState>()(
     (set, get) => ({
       properties: mockProperties,
       favorites: [],
+      hiddenProperties: [],
+      blockedProperties: [],
       filter: {},
       
       toggleFavorite: (id: string) => set((state) => {
@@ -47,9 +54,12 @@ export const usePropertyStore = create<PropertyState>()(
       clearFilter: () => set({ filter: {} }),
       
       getFilteredProperties: () => {
-        const { properties, filter } = get();
+        const { properties, filter, hiddenProperties, blockedProperties } = get();
         
         return properties.filter(property => {
+          // Exclude hidden and blocked properties
+          if (hiddenProperties.includes(property.id)) return false;
+          if (blockedProperties.includes(property.id)) return false;
           // Filter by price range
           if (filter.minPrice && property.price < filter.minPrice) return false;
           if (filter.maxPrice && property.price > filter.maxPrice) return false;
@@ -100,7 +110,12 @@ export const usePropertyStore = create<PropertyState>()(
       },
       
       getFeaturedProperties: () => {
-        return get().properties.filter(property => property.isFeatured);
+        const { properties, hiddenProperties, blockedProperties } = get();
+        return properties.filter(property =>
+          property.isFeatured &&
+          !hiddenProperties.includes(property.id) &&
+          !blockedProperties.includes(property.id)
+        );
       },
       
       getPropertiesNearby: (latitude: number, longitude: number, maxDistance: number = 20) => {
@@ -210,13 +225,31 @@ export const usePropertyStore = create<PropertyState>()(
       resetForSignOut: () => set({
         properties: mockProperties,
         favorites: [],
+        hiddenProperties: [],
+        blockedProperties: [],
         filter: {},
       }),
+
+      hideProperty: (id: string) => set((state) => ({
+        hiddenProperties: state.hiddenProperties.includes(id)
+          ? state.hiddenProperties
+          : [...state.hiddenProperties, id],
+      })),
+
+      unhideProperty: (id: string) => set((state) => ({
+        hiddenProperties: state.hiddenProperties.filter((hid) => hid !== id),
+      })),
+
+      blockProperty: (id: string) => set((state) => ({
+        blockedProperties: state.blockedProperties.includes(id)
+          ? state.blockedProperties
+          : [...state.blockedProperties, id],
+      })),
     }),
     {
       name: 'property-storage',
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({ favorites: state.favorites, properties: state.properties }),
+      partialize: (state) => ({ favorites: state.favorites, properties: state.properties, hiddenProperties: state.hiddenProperties, blockedProperties: state.blockedProperties }),
     }
   )
 );

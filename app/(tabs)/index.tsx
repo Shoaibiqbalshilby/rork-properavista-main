@@ -13,7 +13,7 @@ import { fetchAllPropertiesFromSupabase } from '@/lib/propertyApi';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { properties, filter, setFilter, getFeaturedProperties, setProperties } = usePropertyStore();
+  const { properties, filter, setFilter, getFeaturedProperties, setProperties, hiddenProperties, blockedProperties } = usePropertyStore();
   const { isAuthenticated } = useAuthStore();
   const [searchQuery, setSearchQuery] = React.useState('');
   const [filterModalVisible, setFilterModalVisible] = React.useState(false);
@@ -64,9 +64,15 @@ export default function HomeScreen() {
     router.push('/add-property' as any);
   };
 
-  // Get properties by listing type
+  // Get properties by listing type (excluding hidden/blocked)
   const getPropertiesByListingType = (type: string) => {
-    return properties.filter(p => p.listingType === type).slice(0, 3);
+    return properties
+      .filter(p =>
+        p.listingType === type &&
+        !hiddenProperties.includes(p.id) &&
+        !blockedProperties.includes(p.id)
+      )
+      .slice(0, 3);
   };
 
   const rentProperties = getPropertiesByListingType('rent');

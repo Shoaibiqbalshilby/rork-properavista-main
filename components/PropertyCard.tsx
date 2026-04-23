@@ -1,8 +1,8 @@
 import React from 'react';
-import { StyleSheet, View, Text, Pressable, Platform } from 'react-native';
+import { StyleSheet, View, Text, Pressable, Platform, Modal, TouchableOpacity, Alert } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Heart, MapPin } from 'lucide-react-native';
+import { Heart, MapPin, MoreVertical, EyeOff, Ban, Flag } from 'lucide-react-native';
 import { usePropertyStore } from '@/hooks/usePropertyStore';
 import { useLocationStore } from '@/hooks/useLocationStore';
 import Colors from '@/constants/colors';
@@ -22,10 +22,11 @@ type PropertyCardProps = {
 
 export default function PropertyCard({ property, isFeatured = false, showDistance = false }: PropertyCardProps) {
   const router = useRouter();
-  const { favorites, toggleFavorite } = usePropertyStore();
+  const { favorites, toggleFavorite, hideProperty, blockProperty } = usePropertyStore();
   const { userLocation } = useLocationStore();
   const isFavorite = favorites.includes(property.id);
   const primaryImage = getPropertyPrimaryImage(property);
+  const [menuVisible, setMenuVisible] = React.useState(false);
 
   React.useEffect(() => {
     void prefetchPropertyImageUrls(property.images);
@@ -38,6 +39,47 @@ export default function PropertyCard({ property, isFeatured = false, showDistanc
   const handleFavoritePress = (e: any) => {
     e.stopPropagation();
     toggleFavorite(property.id);
+  };
+
+  const handleMenuPress = (e: any) => {
+    e.stopPropagation();
+    setMenuVisible(true);
+  };
+
+  const handleHide = () => {
+    setMenuVisible(false);
+    hideProperty(property.id);
+  };
+
+  const handleBlock = () => {
+    setMenuVisible(false);
+    Alert.alert(
+      'Block Listing',
+      'This listing will be hidden and you will no longer see content from this source.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: () => blockProperty(property.id),
+        },
+      ]
+    );
+  };
+
+  const handleReport = () => {
+    setMenuVisible(false);
+    Alert.alert(
+      'Report Listing',
+      'Why are you reporting this listing?',
+      [
+        { text: 'Spam', onPress: () => Alert.alert('Reported', 'Thank you for your report. We will review this listing.') },
+        { text: 'Misleading Information', onPress: () => Alert.alert('Reported', 'Thank you for your report. We will review this listing.') },
+        { text: 'Inappropriate Content', onPress: () => Alert.alert('Reported', 'Thank you for your report. We will review this listing.') },
+        { text: 'Fraud / Scam', onPress: () => Alert.alert('Reported', 'Thank you for your report. We will review this listing.') },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
   };
 
   const formatPrice = (price: number) => {
@@ -103,6 +145,37 @@ export default function PropertyCard({ property, isFeatured = false, showDistanc
       style={[styles.container, isFeatured && styles.featuredContainer]} 
       onPress={handlePress}
     >
+      {/* Property Menu Modal */}
+      <Modal
+        transparent
+        animationType="fade"
+        visible={menuVisible}
+        onRequestClose={() => setMenuVisible(false)}
+      >
+        <Pressable style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
+          <View style={styles.menuSheet}>
+            <Text style={styles.menuTitle} numberOfLines={1}>{property.title}</Text>
+            <View style={styles.menuDivider} />
+            <TouchableOpacity style={styles.menuItem} onPress={handleHide}>
+              <EyeOff size={20} color={Colors.light.text} />
+              <Text style={styles.menuItemText}>Hide this listing</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={handleBlock}>
+              <Ban size={20} color="#e74c3c" />
+              <Text style={[styles.menuItemText, { color: '#e74c3c' }]}>Block this listing</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={handleReport}>
+              <Flag size={20} color="#e67e22" />
+              <Text style={[styles.menuItemText, { color: '#e67e22' }]}>Report this listing</Text>
+            </TouchableOpacity>
+            <View style={styles.menuDivider} />
+            <TouchableOpacity style={styles.menuItem} onPress={() => setMenuVisible(false)}>
+              <Text style={[styles.menuItemText, { textAlign: 'center', width: '100%' }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
       <View style={styles.imageContainer}>
         <Image
           source={primaryImage ? { uri: primaryImage } : undefined}
@@ -134,6 +207,13 @@ export default function PropertyCard({ property, isFeatured = false, showDistanc
             fill={isFavorite ? Colors.light.favorite : 'transparent'}
             strokeWidth={2}
           />
+        </Pressable>
+        <Pressable
+          style={styles.menuButton}
+          onPress={handleMenuPress}
+          hitSlop={10}
+        >
+          <MoreVertical size={20} color="white" />
         </Pressable>
       </View>
       
@@ -267,6 +347,52 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  menuButton: {
+    position: 'absolute',
+    top: 12,
+    right: 54,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  menuSheet: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingBottom: 32,
+    paddingTop: 8,
+  },
+  menuTitle: {
+    fontSize: 14,
+    color: Colors.light.subtext,
+    textAlign: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: '#f0f0f0',
+    marginHorizontal: 0,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    gap: 14,
+  },
+  menuItemText: {
+    fontSize: 16,
+    color: Colors.light.text,
   },
   infoContainer: {
     padding: 16,

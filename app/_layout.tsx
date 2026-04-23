@@ -2,9 +2,14 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { Alert, BackHandler } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { trpc, trpcClient } from "@/lib/trpc";
+import EulaModal from "@/components/EulaModal";
+
+const EULA_ACCEPTED_KEY = "eula_accepted_v1";
 
 export const unstable_settings = {
   initialRouteName: "(tabs)",
@@ -20,6 +25,13 @@ export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     ...FontAwesome.font,
   });
+  const [eulaAccepted, setEulaAccepted] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    AsyncStorage.getItem(EULA_ACCEPTED_KEY).then((value) => {
+      setEulaAccepted(value === "true");
+    });
+  }, []);
 
   useEffect(() => {
     if (fontsLoaded || fontError) {
@@ -31,9 +43,42 @@ export default function RootLayout() {
     return null;
   }
 
+  // Don't render until EULA status is known
+  if (eulaAccepted === null) {
+    return null;
+  }
+
+  const handleEulaAccept = async () => {
+    await AsyncStorage.setItem(EULA_ACCEPTED_KEY, "true");
+    setEulaAccepted(true);
+  };
+
+  const handleEulaDecline = () => {
+    Alert.alert(
+      "Agreement Required",
+      "You must accept the End User License Agreement to use Properavista.",
+      [
+        {
+          text: "Review Again",
+          style: "cancel",
+        },
+        {
+          text: "Exit App",
+          style: "destructive",
+          onPress: () => BackHandler.exitApp(),
+        },
+      ]
+    );
+  };
+
   return (
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
+        <EulaModal
+          visible={!eulaAccepted}
+          onAccept={handleEulaAccept}
+          onDecline={handleEulaDecline}
+        />
         <RootLayoutNav />
       </QueryClientProvider>
     </trpc.Provider>
