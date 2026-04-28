@@ -9,9 +9,17 @@ const MIME_TYPES_BY_EXTENSION: Record<string, string> = {
   gif: 'image/gif',
   heic: 'image/heic',
   heif: 'image/heif',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  m4v: 'video/x-m4v',
+  webm: 'video/webm',
+  avi: 'video/x-msvideo',
+  '3gp': 'video/3gpp',
 };
 
-export const isRemoteImageUrl = (uri?: string | null) => !!uri && /^https?:\/\//i.test(uri);
+export const isRemoteMediaUrl = (uri?: string | null) => !!uri && /^https?:\/\//i.test(uri);
+
+export const isRemoteImageUrl = isRemoteMediaUrl;
 
 export const isLocalImageUri = (uri?: string | null) => !!uri && /^(file|content|ph|assets-library):/i.test(uri);
 
@@ -20,7 +28,7 @@ export const extractStorageObjectPath = (uri?: string | null, bucket = 'property
     return null;
   }
 
-  if (!isRemoteImageUrl(uri)) {
+  if (!isRemoteMediaUrl(uri)) {
     return uri.replace(/^\/+/, '');
   }
 
@@ -192,6 +200,18 @@ export const uploadImageToBucket = async (
   }
 };
 
+export const uploadVideoToBucket = async (
+  videoUri: string,
+  bucket: 'property-images',
+  userId: string
+) => {
+  try {
+    return await uploadImageToBucket(videoUri, bucket, userId);
+  } catch (error) {
+    throw error instanceof Error ? error : new Error('Video upload failed');
+  }
+};
+
 export const uploadPropertyImages = async (
   images: string[], 
   userId: string,
@@ -212,4 +232,8 @@ export const uploadPropertyImages = async (
   }
 
   return uploaded;
+};
+
+export const uploadPropertyVideo = async (videoUri: string, userId: string) => {
+  return uploadVideoToBucket(videoUri, 'property-images', userId);
 };

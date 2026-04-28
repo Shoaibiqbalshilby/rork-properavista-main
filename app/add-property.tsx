@@ -11,12 +11,13 @@ import {
   UIManager,
   Modal,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import MapView, { MapPressEvent, Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import { Camera, Check, X } from 'lucide-react-native';
+import { Camera, Check, PlayCircle, X } from 'lucide-react-native';
 import { usePropertyStore } from '@/hooks/usePropertyStore';
 import { useAuthStore } from '@/hooks/useAuthStore';
 import Colors from '@/constants/colors';
@@ -26,7 +27,7 @@ import { getNearbyFacilityDistances } from '@/utils/facilities';
 import { LandUnit, ListingStatus, Property } from '@/types/property';
 import { getStaticMapUrl, hasGoogleMapsApiKey } from '@/constants/maps';
 import { createPropertyInSupabase, updatePropertyInSupabase } from '@/lib/propertyApi';
-import { isRemoteImageUrl, uploadPropertyImages } from '@/lib/storage';
+import { isRemoteImageUrl, isRemoteMediaUrl, uploadPropertyImages, uploadPropertyVideo } from '@/lib/storage';
 import { testSupabaseConnection } from '@/lib/supabase';
 
 const propertyTypes = [
@@ -125,6 +126,7 @@ export default function AddPropertyScreen() {
   const [paymentFrequency, setPaymentFrequency] = useState<string | undefined>();
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
   const [images, setImages] = useState<string[]>([]);
+  const [video, setVideo] = useState<string | undefined>();
   const [landUnit, setLandUnit] = useState<LandUnit>('plot');
   const [landQuantity, setLandQuantity] = useState('1');
   const [latitude, setLatitude] = useState('6.5244');
@@ -174,6 +176,7 @@ export default function AddPropertyScreen() {
     setListingStatus(editingProperty.listingStatus || 'available');
     setSelectedAmenities(editingProperty.amenities || []);
     setImages(editingProperty.previewImages || editingProperty.images || []);
+    setVideo(editingProperty.previewVideo || editingProperty.video);
     setLatitude(String(editingProperty.latitude));
     setLongitude(String(editingProperty.longitude));
 
@@ -220,6 +223,43 @@ export default function AddPropertyScreen() {
 
   const handleRemoveImage = (index: number) => {
     setImages(images.filter((_, imageIndex) => imageIndex !== index));
+  };
+
+  const handleAddVideo = async () => {
+    if (Platform.OS === 'web') {
+      Alert.alert('Not Available', 'Video picking is not fully supported on web.');
+      return;
+    }
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+        allowsEditing: false,
+        quality: 1,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setVideo(result.assets[0].uri);
+      }
+    } catch {
+      Alert.alert('Error', 'Failed to pick video');
+    }
+  };
+
+  const handleRemoveVideo = () => {
+    setVideo(undefined);
+  };
+
+  const handleOpenVideoPreview = async () => {
+    if (!video) {
+      return;
+    }
+
+    try {
+      await Linking.openURL(video);
+    } catch {
+      Alert.alert('Video unavailable', 'Unable to open the selected video on this device.');
+    }
   };
 
   const toggleAmenity = (amenity: string) => {
@@ -269,7 +309,7 @@ export default function AddPropertyScreen() {
     return null;
   };
 
-  const buildPropertyPayload = (uploadedImages: string[]): Omit<Property, 'id'> => {
+  const buildPropertyPayload = (uploadedImages: string[], uploadedVideo?: string): Omit<Property, 'id'> => {
     const paymentFrequencyObj = !paymentFrequency
       ? undefined
       : listingType === 'rent'
@@ -295,6 +335,7 @@ export default function AddPropertyScreen() {
       listingStatus,
       amenities: selectedAmenities,
       images: uploadedImages,
+      video: uploadedVideo,
       latitude: Number(latitude),
       longitude: Number(longitude),
       isFeatured: false,
@@ -342,48 +383,65 @@ export default function AddPropertyScreen() {
       console.log('[AddProperty] Starting submission for user:', user?.id || 'guest');
       console.log('[AddProperty] User details:', { userId: user?.id || null, hasCompany: !!user?.companyName });
       
-      // Try to upload images, but continue even if upload fails
+      // Try to upload media, but continue even if upload fails
       let uploadedImages: string[] = [];
+      let uploadedVideo: string | undefined;
       let uploadFailureMessage = '';
       console.log('[AddProperty] Images to upload:', images.length);
+      console.log('[AddProperty] Video selected:', !!video);
       
       try {
-        if (images.length > 0 && user?.id) {
+        const totalUploads = images.length + (video ? 1 : 0);
+
+        if (totalUploads > 0 && user?.id) {
           setShowUploadModal(true);
           setUploadProgress(0);
-          console.log('[AddProperty] Starting image upload...');
-          
-          const allUploaded = await uploadPropertyImages(images, user.id, (progress) => {
-            setUploadProgress(progress);
-            console.log('[AddProperty] Upload progress:', progress + '%');
-          });
-          
-          // Only keep images that were actually uploaded to remote storage (public https:// URLs)
-          // Local file:// URIs mean the upload failed — don't save those to Supabase
-          uploadedImages = allUploaded.filter((uri) => isRemoteImageUrl(uri));
-          
-          // If no images uploaded successfully, fall back to original local URIs for payload
-          // (they will only be shown locally via previewImages)
-          if (uploadedImages.length === 0) {
-            uploadedImages = [];
+          console.log('[AddProperty] Starting media upload...');
+
+          if (images.length > 0) {
+            const allUploaded = await uploadPropertyImages(images, user.id, (progress) => {
+              const scaledProgress = Math.round((progress * images.length) / totalUploads);
+              setUploadProgress(scaledProgress);
+              console.log('[AddProperty] Upload progress:', scaledProgress + '%');
+            });
+
+            // Only keep images that were actually uploaded to remote storage (public https:// URLs)
+            // Local file:// URIs mean the upload failed — don't save those to Supabase
+            uploadedImages = allUploaded.filter((uri) => isRemoteImageUrl(uri));
+
+            if (uploadedImages.length === 0) {
+              uploadedImages = [];
+            }
+          }
+
+          if (video) {
+            const videoUploadResult = await uploadPropertyVideo(video, user.id);
+            uploadedVideo = isRemoteMediaUrl(videoUploadResult) ? videoUploadResult : undefined;
+            setUploadProgress(100);
           }
           
           console.log('[AddProperty] Images uploaded successfully:', uploadedImages.length, 'of', images.length);
+          console.log('[AddProperty] Video uploaded successfully:', !!uploadedVideo);
           setShowUploadModal(false);
         }
       } catch (error) {
-        console.error('[AddProperty] Image upload failed, continuing without remote images:', error);
+        console.error('[AddProperty] Media upload failed, continuing without remote media:', error);
         setShowUploadModal(false);
         uploadedImages = [];
-        uploadFailureMessage = error instanceof Error ? error.message : 'Property images could not be uploaded to Supabase.';
+        uploadedVideo = undefined;
+        uploadFailureMessage = error instanceof Error ? error.message : 'Property media could not be uploaded to Supabase.';
       }
 
       if (!isGuestSubmission && uploadedImages.length === 0) {
         throw new Error(uploadFailureMessage || 'Property images could not be uploaded to Supabase. Please check your internet connection and try again.');
       }
+
+      if (!isGuestSubmission && video && !uploadedVideo) {
+        throw new Error(uploadFailureMessage || 'Property video could not be uploaded to Supabase. Please check your internet connection and try again.');
+      }
       
       console.log('[AddProperty] Building property payload...');
-      const payload = buildPropertyPayload(uploadedImages);
+      const payload = buildPropertyPayload(uploadedImages, uploadedVideo);
       console.log('[AddProperty] Payload created:', { title: payload.title, type: payload.type });
       
       let savedProperty: Property;
@@ -394,6 +452,7 @@ export default function AddPropertyScreen() {
         savedProperty = {
           ...savedProperty,
           previewImages: images,
+          previewVideo: video,
         };
       } else if (isGuestSubmission) {
         console.log('[AddProperty] Creating local guest property...');
@@ -403,6 +462,7 @@ export default function AddPropertyScreen() {
           id: localPropertyId,
           listingStatus: payload.listingStatus || 'available',
           previewImages: images,
+          previewVideo: video,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -412,6 +472,7 @@ export default function AddPropertyScreen() {
         savedProperty = {
           ...savedProperty,
           previewImages: images,
+          previewVideo: video,
         };
       }
 
@@ -436,6 +497,7 @@ export default function AddPropertyScreen() {
             savedProperty = {
               ...facilitiesUpdate,
               previewImages: savedProperty.previewImages,
+              previewVideo: savedProperty.previewVideo,
             };
           }
         }
@@ -860,6 +922,29 @@ export default function AddPropertyScreen() {
             ))}
           </View>
 
+          <Text style={styles.sectionTitle}>Video</Text>
+          <View style={styles.imagesContainer}>
+            <Pressable style={styles.addImageButton} onPress={handleAddVideo}>
+              <PlayCircle size={24} color={Colors.light.primary} />
+              <Text style={styles.addImageText}>{video ? 'Replace Video' : 'Add Video'}</Text>
+            </Pressable>
+
+            {video ? (
+              <Pressable style={styles.videoPreviewContainer} onPress={handleOpenVideoPreview}>
+                <View style={styles.videoPreviewContent}>
+                  <PlayCircle size={28} color={Colors.light.primary} />
+                  <Text style={styles.videoPreviewTitle}>Video selected</Text>
+                  <Text style={styles.videoPreviewText} numberOfLines={2}>
+                    Tap to open preview
+                  </Text>
+                </View>
+                <Pressable style={styles.removeImageButton} onPress={handleRemoveVideo}>
+                  <X size={16} color="white" />
+                </Pressable>
+              </Pressable>
+            ) : null}
+          </View>
+
           <Pressable style={[styles.submitButton, submitting && styles.disabledButton]} onPress={handleSubmit}>
             <Text style={styles.submitButtonText}>
               {submitting
@@ -874,7 +959,7 @@ export default function AddPropertyScreen() {
         </View>
       </ScrollView>
 
-      {/* Image Upload Progress Modal */}
+      {/* Media Upload Progress Modal */}
       <Modal
         visible={showUploadModal}
         transparent
@@ -884,7 +969,7 @@ export default function AddPropertyScreen() {
         <View style={styles.uploadModalOverlay}>
           <View style={styles.uploadModalContent}>
             <ActivityIndicator size="large" color={Colors.light.primary} />
-            <Text style={styles.uploadModalTitle}>Uploading Images</Text>
+            <Text style={styles.uploadModalTitle}>Uploading Media</Text>
             <Text style={styles.uploadModalPercent}>{uploadProgress}%</Text>
             
             {/* Progress Bar */}
@@ -898,7 +983,7 @@ export default function AddPropertyScreen() {
             </View>
             
             <Text style={styles.uploadModalSubtext}>
-              Please wait while your images are being uploaded...
+              Please wait while your property media is being uploaded...
             </Text>
           </View>
         </View>
@@ -1053,6 +1138,33 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     borderRadius: 8,
+  },
+  videoPreviewContainer: {
+    width: 180,
+    height: 100,
+    borderRadius: 8,
+    margin: 4,
+    padding: 12,
+    backgroundColor: Colors.light.card,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    position: 'relative',
+  },
+  videoPreviewContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  videoPreviewTitle: {
+    marginTop: 8,
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.light.text,
+  },
+  videoPreviewText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: Colors.light.subtext,
+    lineHeight: 16,
   },
   removeImageButton: {
     position: 'absolute',

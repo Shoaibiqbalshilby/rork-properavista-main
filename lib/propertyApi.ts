@@ -16,6 +16,7 @@ type PropertyRow = {
   bathrooms: number;
   square_feet: number;
   images: string[];
+  video_url?: string | null;
   is_featured: boolean;
   property_type: Property['type'];
   amenities: string[];
@@ -45,6 +46,7 @@ const mapRowToProperty = (row: PropertyRow): Property => ({
   bathrooms: row.bathrooms,
   squareFeet: row.square_feet,
   images: row.images || [],
+  video: row.video_url || undefined,
   isFeatured: row.is_featured,
   type: row.property_type,
   amenities: row.amenities || [],
@@ -75,6 +77,7 @@ const mapPropertyToRow = (property: Omit<Property, 'id'>, userId: string) => ({
   bathrooms: property.bathrooms,
   square_feet: property.squareFeet,
   images: property.images,
+  video_url: property.video || null,
   is_featured: property.isFeatured,
   property_type: property.type,
   amenities: property.amenities,
@@ -189,6 +192,7 @@ export const updatePropertyInSupabase = async (
   if (updates.bathrooms !== undefined) rowUpdates.bathrooms = updates.bathrooms;
   if (updates.squareFeet !== undefined) rowUpdates.square_feet = updates.squareFeet;
   if (updates.images !== undefined) rowUpdates.images = updates.images;
+  if (updates.video !== undefined) rowUpdates.video_url = updates.video;
   if (updates.isFeatured !== undefined) rowUpdates.is_featured = updates.isFeatured;
   if (updates.type !== undefined) rowUpdates.property_type = updates.type;
   if (updates.amenities !== undefined) rowUpdates.amenities = updates.amenities;

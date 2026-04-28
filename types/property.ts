@@ -11,6 +11,7 @@ export interface Property {
   bathrooms: number;
   squareFeet: number;
   images: string[];
+  video?: string;
   isFeatured: boolean;
   type: 'house' | 'apartment' | 'condo' | 'townhouse' | 'villa' | 'duplex' | 'flat' | 'landed';
   amenities: string[];
@@ -19,6 +20,7 @@ export interface Property {
   longitude: number;
   listingType: 'sell' | 'rent' | 'short-let';
   previewImages?: string[];
+  previewVideo?: string;
   paymentFrequency?: PaymentFrequency;
   listingStatus?: ListingStatus;
   landDetails?: LandDetails;

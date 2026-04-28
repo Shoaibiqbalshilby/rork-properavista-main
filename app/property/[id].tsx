@@ -29,6 +29,7 @@ import {
   Share2,
   Square,
   Pencil,
+  PlayCircle,
 } from 'lucide-react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { usePropertyStore } from '@/hooks/usePropertyStore';
@@ -210,6 +211,7 @@ export default function PropertyDetailScreen() {
   const listerPhone = liveProfile?.phone || property.lister?.phone;
   const listerWhatsapp = liveProfile?.whatsapp || property.lister?.whatsapp;
   const listerAddress = liveProfile?.address || property.lister?.address;
+  const propertyVideoUrl = property.video || property.previewVideo;
 
   const handleContactPress = async () => {
     const phone = normalizePhone(listerPhone);
@@ -219,6 +221,18 @@ export default function PropertyDetailScreen() {
     }
     // Open dialer immediately pre-filled with the lister number
     Linking.openURL(`tel:${phone}`);
+  };
+
+  const handleOpenVideoPress = async () => {
+    if (!propertyVideoUrl) {
+      return;
+    }
+
+    try {
+      await Linking.openURL(propertyVideoUrl);
+    } catch {
+      Alert.alert('Video unavailable', 'The property video could not be opened on this device.');
+    }
   };
 
   const sendMessageToOwner = async (body: string) => {
@@ -468,6 +482,21 @@ export default function PropertyDetailScreen() {
         <PropertyImageGallery images={property.images} previewImages={property.previewImages} />
 
         <View style={styles.contentContainer}>
+          {propertyVideoUrl ? (
+            <View style={styles.videoCard}>
+              <View style={styles.videoCardHeader}>
+                <PlayCircle size={22} color={Colors.light.primary} />
+                <Text style={styles.videoCardTitle}>Property video available</Text>
+              </View>
+              <Text style={styles.videoCardText}>
+                Open the uploaded property video in your device player.
+              </Text>
+              <Pressable style={styles.videoCardButton} onPress={handleOpenVideoPress}>
+                <Text style={styles.videoCardButtonText}>Open Video</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           <View style={styles.badgesRow}>
             <View style={styles.listingTypeContainer}>
               <Text style={styles.listingTypeText}>{getListingTypeLabel()}</Text>
@@ -722,6 +751,42 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     padding: 20,
+  },
+  videoCard: {
+    marginBottom: 16,
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: Colors.light.card,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    gap: 10,
+  },
+  videoCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  videoCardTitle: {
+    marginLeft: 10,
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.light.text,
+  },
+  videoCardText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: Colors.light.subtext,
+  },
+  videoCardButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.light.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  videoCardButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
   },
   badgesRow: {
     flexDirection: 'row',

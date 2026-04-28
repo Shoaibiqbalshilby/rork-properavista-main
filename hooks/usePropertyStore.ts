@@ -190,9 +190,11 @@ export const usePropertyStore = create<PropertyState>()(
 
         const mergedProperties = properties.map((incomingProperty) => {
           const existingProperty = state.properties.find((property) => property.id === incomingProperty.id);
-          return existingProperty?.previewImages && !incomingProperty.previewImages
-            ? { ...incomingProperty, previewImages: existingProperty.previewImages }
-            : incomingProperty;
+          return {
+            ...incomingProperty,
+            previewImages: incomingProperty.previewImages || existingProperty?.previewImages,
+            previewVideo: incomingProperty.previewVideo || existingProperty?.previewVideo,
+          };
         });
 
         const nextProperties = [...mergedProperties, ...localOnlyProperties];
@@ -206,9 +208,11 @@ export const usePropertyStore = create<PropertyState>()(
         const existingIndex = state.properties.findIndex((item) => item.id === property.id);
 
         const existingProperty = existingIndex === -1 ? null : state.properties[existingIndex];
-        const nextProperty = existingProperty?.previewImages && !property.previewImages
-          ? { ...property, previewImages: existingProperty.previewImages }
-          : property;
+        const nextProperty = {
+          ...property,
+          previewImages: property.previewImages || existingProperty?.previewImages,
+          previewVideo: property.previewVideo || existingProperty?.previewVideo,
+        };
 
         void prefetchPropertyImages([nextProperty]);
 

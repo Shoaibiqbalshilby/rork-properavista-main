@@ -351,6 +351,7 @@ CREATE TABLE IF NOT EXISTS public.properties (
   bathrooms INTEGER NOT NULL DEFAULT 0,
   square_feet INTEGER NOT NULL DEFAULT 0,
   images JSONB NOT NULL DEFAULT '[]'::jsonb,
+  video_url TEXT,
   is_featured BOOLEAN NOT NULL DEFAULT FALSE,
   property_type VARCHAR(30) NOT NULL,
   amenities JSONB NOT NULL DEFAULT '[]'::jsonb,

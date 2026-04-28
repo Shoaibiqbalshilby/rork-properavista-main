@@ -23,11 +23,15 @@ export default function MyPropertiesScreen() {
 
       try {
         const userProperties = await fetchUserPropertiesFromSupabase(user.id);
-        // Merge previewImages from the local store so images remain visible
+        // Merge local previews so media remains visible while remote URLs settle.
         const localProperties = getPropertiesByUser(user.id);
         const merged = userProperties.map((remote) => {
           const local = localProperties.find((p) => p.id === remote.id);
-          return local?.previewImages ? { ...remote, previewImages: local.previewImages } : remote;
+          return {
+            ...remote,
+            previewImages: remote.previewImages || local?.previewImages,
+            previewVideo: remote.previewVideo || local?.previewVideo,
+          };
         });
         setProperties(merged);
       } catch {
