@@ -29,7 +29,6 @@ import {
   Share2,
   Square,
   Pencil,
-  PlayCircle,
 } from 'lucide-react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { usePropertyStore } from '@/hooks/usePropertyStore';
@@ -37,6 +36,7 @@ import { useLocationStore } from '@/hooks/useLocationStore';
 import { useAuthStore } from '@/hooks/useAuthStore';
 import PropertyFeature from '@/components/PropertyFeature';
 import PropertyImageGallery from '@/components/PropertyImageGallery';
+import PropertyVideoPlayer from '@/components/PropertyVideoPlayer';
 import Colors from '@/constants/colors';
 import { calculateDistance, formatDistance } from '@/utils/distance';
 import { normalizePhone } from '@/utils/contact';
@@ -221,18 +221,6 @@ export default function PropertyDetailScreen() {
     }
     // Open dialer immediately pre-filled with the lister number
     Linking.openURL(`tel:${phone}`);
-  };
-
-  const handleOpenVideoPress = async () => {
-    if (!propertyVideoUrl) {
-      return;
-    }
-
-    try {
-      await Linking.openURL(propertyVideoUrl);
-    } catch {
-      Alert.alert('Video unavailable', 'The property video could not be opened on this device.');
-    }
   };
 
   const sendMessageToOwner = async (body: string) => {
@@ -484,16 +472,8 @@ export default function PropertyDetailScreen() {
         <View style={styles.contentContainer}>
           {propertyVideoUrl ? (
             <View style={styles.videoCard}>
-              <View style={styles.videoCardHeader}>
-                <PlayCircle size={22} color={Colors.light.primary} />
-                <Text style={styles.videoCardTitle}>Property video available</Text>
-              </View>
-              <Text style={styles.videoCardText}>
-                Open the uploaded property video in your device player.
-              </Text>
-              <Pressable style={styles.videoCardButton} onPress={handleOpenVideoPress}>
-                <Text style={styles.videoCardButtonText}>Open Video</Text>
-              </Pressable>
+              <Text style={styles.videoCardTitle}>Property Video</Text>
+              <PropertyVideoPlayer source={propertyVideoUrl} style={styles.videoPlayer} />
             </View>
           ) : null}
 
@@ -754,39 +734,17 @@ const styles = StyleSheet.create({
   },
   videoCard: {
     marginBottom: 16,
-    padding: 16,
-    borderRadius: 16,
-    backgroundColor: Colors.light.card,
-    borderWidth: 1,
-    borderColor: Colors.light.border,
-    gap: 10,
-  },
-  videoCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    gap: 12,
   },
   videoCardTitle: {
-    marginLeft: 10,
     fontSize: 16,
     fontWeight: '600',
     color: Colors.light.text,
   },
-  videoCardText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: Colors.light.subtext,
-  },
-  videoCardButton: {
-    alignSelf: 'flex-start',
-    backgroundColor: Colors.light.primary,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  videoCardButtonText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '600',
+  videoPlayer: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+    borderRadius: 16,
   },
   badgesRow: {
     flexDirection: 'row',

@@ -8,6 +8,7 @@ import { useLocationStore } from '@/hooks/useLocationStore';
 import Colors from '@/constants/colors';
 import { Property } from '@/types/property';
 import { calculateDistance, formatDistance } from '@/utils/distance';
+import PropertyVideoPlayer from '@/components/PropertyVideoPlayer';
 import {
   getPropertyImagePlaceholder,
   getPropertyPrimaryImage,
@@ -26,6 +27,7 @@ export default function PropertyCard({ property, isFeatured = false, showDistanc
   const { userLocation } = useLocationStore();
   const isFavorite = favorites.includes(property.id);
   const primaryImage = getPropertyPrimaryImage(property);
+  const propertyVideoUrl = property.video || property.previewVideo;
   const [menuVisible, setMenuVisible] = React.useState(false);
 
   React.useEffect(() => {
@@ -177,19 +179,28 @@ export default function PropertyCard({ property, isFeatured = false, showDistanc
       </Modal>
 
       <View style={styles.imageContainer}>
-        <Image
-          source={primaryImage ? { uri: primaryImage } : undefined}
-          placeholder={getPropertyImagePlaceholder(property)}
-          style={styles.image}
-          contentFit="cover"
-          cachePolicy="memory-disk"
-          transition={120}
-        />
+        {propertyVideoUrl ? (
+          <PropertyVideoPlayer source={propertyVideoUrl} style={styles.media} />
+        ) : (
+          <Image
+            source={primaryImage ? { uri: primaryImage } : undefined}
+            placeholder={getPropertyImagePlaceholder(property)}
+            style={styles.media}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={120}
+          />
+        )}
         {isFeatured && (
           <View style={styles.featuredBadge}>
             <Text style={styles.featuredText}>Featured</Text>
           </View>
         )}
+        {propertyVideoUrl ? (
+          <View style={styles.videoBadge}>
+            <Text style={styles.videoBadgeText}>Video</Text>
+          </View>
+        ) : null}
         <View style={styles.listingTypeBadge}>
           <Text style={styles.listingTypeText}>{getListingTypeLabel()}</Text>
         </View>
@@ -291,7 +302,7 @@ const styles = StyleSheet.create({
     position: 'relative',
     height: 200,
   },
-  image: {
+  media: {
     width: '100%',
     height: '100%',
   },
@@ -305,6 +316,20 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   featuredText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  videoBadge: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  videoBadgeText: {
     color: 'white',
     fontSize: 12,
     fontWeight: '600',
