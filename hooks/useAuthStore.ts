@@ -223,29 +223,39 @@ const hydrateAuthenticatedUser = async (
 };
 
 const postAuthJson = async <T>(path: string, payload: unknown): Promise<T> => {
-  const response = await fetch(`${getApiBaseUrl()}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
+  const apiUrl = `${getApiBaseUrl()}${path}`;
+  
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
 
-  const contentType = response.headers.get('content-type') || '';
+    const contentType = response.headers.get('content-type') || '';
 
-  if (!contentType.toLowerCase().includes('application/json')) {
-    throw new Error('The app could not reach the authentication API. Received a non-JSON response instead.');
+    if (!contentType.toLowerCase().includes('application/json')) {
+      throw new Error('The app could not reach the authentication API. Received a non-JSON response instead.');
+    }
+
+    const responseBody = await response.json().catch(() => {
+      throw new Error('The app received an invalid response from the authentication API.');
+    });
+
+    if (!response.ok || responseBody.success === false) {
+      throw new Error(responseBody.message || 'Request failed');
+    }
+
+    return responseBody as T;
+  } catch (error) {
+    // Provide helpful error message if it's a network error
+    if (error instanceof TypeError && error.message.includes('Network request failed')) {
+      throw new Error(`Cannot reach backend at ${apiUrl}. Make sure the server is running and accessible. For TestFlight on a real device, set EXPO_PUBLIC_API_BASE_URL to your backend server URL.`);
+    }
+    throw error;
   }
-
-  const responseBody = await response.json().catch(() => {
-    throw new Error('The app received an invalid response from the authentication API.');
-  });
-
-  if (!response.ok || responseBody.success === false) {
-    throw new Error(responseBody.message || 'Request failed');
-  }
-
-  return responseBody as T;
 };
 
 const resetAuthState = () => ({

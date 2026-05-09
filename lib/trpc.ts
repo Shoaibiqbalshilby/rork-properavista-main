@@ -37,7 +37,13 @@ export const getApiBaseUrl = () => {
     return `http://${host}:8787/api`;
   }
 
-  // Fallback so the module doesn't throw at load time on a built APK.
+  // For production/TestFlight: Return a placeholder that will error with a helpful message
+  // Users must set EXPO_PUBLIC_API_BASE_URL environment variable before building
+  if (process.env.NODE_ENV === 'production') {
+    return "https://api.properavista.com/api";
+  }
+
+  // For development: Fallback so the module doesn't throw at load time
   // API-dependent features will show their own error messages instead of freezing on the splash.
   return "http://localhost:8787/api";
 };
