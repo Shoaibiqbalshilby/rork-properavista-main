@@ -1,6 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
 
 // Validate Supabase configuration
 const validateSupabaseConfig = () => {
@@ -22,28 +21,41 @@ const validateSupabaseConfig = () => {
 
 validateSupabaseConfig();
 
-// Client-side Supabase client with AsyncStorage for React Native
-export const supabaseClient = createClient(
-  process.env.EXPO_PUBLIC_SUPABASE_URL || '',
-  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '',
-  {
-    auth: {
+const isServerRuntime =
+  typeof navigator === 'undefined' || navigator.product !== 'ReactNative';
+
+const supabaseClientAuthConfig = isServerRuntime
+  ? {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false,
+    }
+  : {
       storage: AsyncStorage,
       storageKey: 'properavista-auth-v2',
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
-    },
+    };
+
+// Client-side Supabase client with AsyncStorage for React Native
+export const supabaseClient = createClient(
+  process.env.EXPO_PUBLIC_SUPABASE_URL || '',
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '',
+  {
+    auth: supabaseClientAuthConfig,
   }
 );
 
-supabaseClient.auth.getSession().then(({ error }) => {
-  if (error?.message?.toLowerCase().includes('refresh token')) {
-    supabaseClient.auth.signOut({ scope: 'local' }).catch(() => {
-      // Ignore cleanup failures for invalid local sessions.
-    });
-  }
-});
+if (!isServerRuntime) {
+  supabaseClient.auth.getSession().then(({ error }) => {
+    if (error?.message?.toLowerCase().includes('refresh token')) {
+      supabaseClient.auth.signOut({ scope: 'local' }).catch(() => {
+        // Ignore cleanup failures for invalid local sessions.
+      });
+    }
+  });
+}
 
 const createUnavailableAdminClient = () =>
   new Proxy(

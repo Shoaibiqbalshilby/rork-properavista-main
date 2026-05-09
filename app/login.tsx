@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Alert } from 'react-native';
 import { 
   StyleSheet, 
@@ -13,18 +13,15 @@ import {
   ActivityIndicator
 } from 'react-native';
 import { Image } from 'expo-image';
-import { useRouter, Link, useLocalSearchParams } from 'expo-router';
-import type { EmailOtpType } from '@supabase/supabase-js';
+import { useRouter, Link } from 'expo-router';
 import { Eye, EyeOff, Mail, Lock } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import PasswordResetCard from '@/components/PasswordResetCard';
 import { useAuthStore } from '@/hooks/useAuthStore';
-import { supabaseClient } from '@/lib/supabase';
 import Colors from '@/constants/colors';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ emailConfirmed?: string; token_hash?: string; type?: string }>();
   const insets = useSafeAreaInsets();
   const { login, resendSignupConfirmation, isLoading, error, clearError, cancelPasswordReset } = useAuthStore();
   
@@ -35,45 +32,6 @@ export default function LoginScreen() {
   const [passwordError, setPasswordError] = useState('');
   const [showResetFlow, setShowResetFlow] = useState(false);
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const successMessage = 'Confirmation is successful. You can now sign in with your credentials.';
-
-    const verifySignupConfirmation = async () => {
-      if (!params.token_hash || !params.type) {
-        if (params.emailConfirmed === '1') {
-          setConfirmationMessage(successMessage);
-          Alert.alert('Confirmation Successful', successMessage);
-        }
-        return;
-      }
-
-      const { error } = await supabaseClient.auth.verifyOtp({
-        token_hash: String(params.token_hash),
-        type: String(params.type) as EmailOtpType,
-      });
-
-      if (cancelled) {
-        return;
-      }
-
-      if (error) {
-        setConfirmationMessage('This confirmation link is invalid or expired. Request a new confirmation email and try again.');
-        return;
-      }
-
-      setConfirmationMessage(successMessage);
-      Alert.alert('Confirmation Successful', successMessage);
-      router.replace('/login?emailConfirmed=1');
-    };
-
-    verifySignupConfirmation();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [params.emailConfirmed, params.token_hash, params.type, router]);
   
   const validateEmail = () => {
     if (!email) {
@@ -121,7 +79,11 @@ export default function LoginScreen() {
     }
   };
 
-  const shouldShowResendConfirmation = !!email && (error?.toLowerCase().includes('confirm your email') || false);
+  const shouldShowResendConfirmation = !!email && (
+    error?.toLowerCase().includes('verify the email pin') ||
+    error?.toLowerCase().includes('confirm your email') ||
+    false
+  );
 
   const handleResendConfirmation = async () => {
     const isEmailValid = validateEmail();
@@ -131,7 +93,8 @@ export default function LoginScreen() {
 
     const success = await resendSignupConfirmation(email);
     if (success) {
-      Alert.alert('Confirmation email sent', 'Check your inbox and spam folder for the new confirmation email.');
+      setConfirmationMessage('A fresh email verification PIN has been sent. Enter it on the sign-up screen to finish creating your account.');
+      Alert.alert('Verification PIN sent', 'Check your inbox and spam folder for the new email verification PIN.');
     }
   };
   
@@ -263,7 +226,7 @@ export default function LoginScreen() {
                   onPress={handleResendConfirmation}
                   disabled={isLoading}
                 >
-                  <Text style={styles.resendButtonText}>Resend Confirmation Email</Text>
+                  <Text style={styles.resendButtonText}>Resend Verification PIN</Text>
                 </Pressable>
               ) : null}
               

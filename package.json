@@ -3,18 +3,18 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
-    "start": "bunx rork start -p b56iwbrzyrxr9m4cbs4w8 --tunnel",
-    "start-web": "bunx rork start -p b56iwbrzyrxr9m4cbs4w8 --web --tunnel",
-    "start-web-dev": "DEBUG=expo* bunx rork start -p b56iwbrzyrxr9m4cbs4w8 --web --tunnel",
+    "start": "npx expo start --tunnel",
+    "start-web": "npx expo start --web --tunnel",
+    "start-web-dev": "DEBUG=expo* npx expo start --web --tunnel",
+    "backend": "bash ./scripts/run-backend.sh",
     "bundle-ios": "react-native bundle --entry-file index.js --platform ios --dev false --bundle-output ios/main.jsbundle --assets-dest ios",
-    "android": "lsof -ti:8081 | xargs kill -9 2>/dev/null || true; adb reverse tcp:8081 tcp:8081 || true; npx expo run:android",
-    "ios": "npx expo run:ios"
+    "android": "bash ./scripts/run-android.sh",
+    "ios": "bash ./scripts/run-ios.sh"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "@hono/trpc-server": "^0.3.4",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@rork-ai/toolkit-sdk": "0.2.51",
     "@supabase/supabase-js": "^2.38.0",
     "@tanstack/react-query": "^5.80.6",
     "@trpc/client": "^11.3.1",
@@ -40,6 +40,7 @@
     "expo-web-browser": "~15.0.10",
     "hono": "^4.7.11",
     "lucide-react-native": "^0.475.0",
+    "nodemailer": "^7.0.3",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
@@ -59,6 +60,7 @@
     "@react-native-community/cli": "^20.1.2",
     "@react-native/metro-config": "^0.84.1",
     "@types/react": "~19.1.10",
+    "tsx": "^4.21.0",
     "typescript": "~5.9.2"
   },
   "private": true

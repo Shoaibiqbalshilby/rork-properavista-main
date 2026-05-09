@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { Session as SupabaseAuthSession, User as SupabaseAuthUser } from '@supabase/supabase-js';
 import { supabaseClient } from '@/lib/supabase';
 import { getApiBaseUrl } from '@/lib/trpc';
 import { useLocationStore } from '@/hooks/useLocationStore';
@@ -44,6 +45,7 @@ interface AuthState {
   // Actions
   login: (email: string, password: string) => Promise<boolean>;
   signup: (name: string, email: string, password: string, phone?: string, whatsapp?: string) => Promise<boolean>;
+  verifySignupPin: (email: string, pinCode: string, password: string) => Promise<boolean>;
   logout: () => void;
   deleteAccount: () => Promise<boolean>;
   clearError: () => void;
@@ -75,21 +77,67 @@ const getPasswordResetErrorMessage = (error: unknown, fallback: string) => {
   return message;
 };
 
-const SIGNUP_CONFIRM_REDIRECT_URL = 'myapp://login?emailConfirmed=1';
-
 const getSignupErrorMessage = (error: unknown, fallback: string) => {
   const message = getErrorMessage(error, fallback);
   const lowerMessage = message.toLowerCase();
 
+  if (lowerMessage.includes('invalid api key')) {
+    return 'The server-side signup key is invalid. The app can still use direct Supabase email verification, but the backend service-role key in .env.local must be replaced with a valid Supabase service-role key.';
+  }
+
+  if (lowerMessage.includes('email signups are disabled')) {
+    return 'Email authentication is disabled in Supabase. Open Supabase Dashboard > Authentication > Sign In / Providers > Email, enable Email, and make sure new user signups are allowed.';
+  }
+
+  if (lowerMessage.includes('error sending confirmation email')) {
+    return 'Supabase could not send the verification PIN email. Your project is still using an SMTP sender that is not verified. In Supabase Dashboard, either disable custom SMTP to use the default mailer, or fix the SendGrid sender identity for support@properavista.com.';
+  }
+
   if (lowerMessage.includes('email rate limit exceeded')) {
-    return 'Supabase confirmation email sending is being throttled right now. Please wait a bit before trying again.';
+    return 'Supabase verification email sending is being throttled right now. Please wait a bit before trying again.';
   }
 
   if (lowerMessage.includes('email not confirmed') || lowerMessage.includes('confirm your email')) {
-    return 'Please confirm your email before signing in.';
+    return 'Please verify the email PIN before signing in.';
   }
 
   return message;
+};
+
+const isBackendSignupFallbackError = (error: unknown) => {
+  const message = getErrorMessage(error, '').toLowerCase();
+
+  return (
+    message.includes('invalid api key') ||
+    message.includes('service_role_key') ||
+    message.includes('supabaseadmin requires')
+  );
+};
+
+const isRecoverableSignupVerificationError = (error: unknown) => {
+  const message = getErrorMessage(error, '').toLowerCase();
+
+  return (
+    isBackendSignupFallbackError(error) ||
+    message.includes('account not found') ||
+    message.includes('user not found') ||
+    message.includes('signup verification failed')
+  );
+};
+
+const sendWelcomeEmailForSession = async (accessToken: string) => {
+  const response = await fetch(`${getApiBaseUrl()}/auth/signup/welcome`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  const payload = await response.json().catch(() => ({ success: false, message: 'Welcome email request failed' }));
+
+  if (!response.ok || !payload.success) {
+    throw new Error(payload.message || 'Welcome email request failed');
+  }
 };
 
 const upsertOwnUserProfile = async (userId: string, email: string, name?: string, phone?: string, whatsapp?: string) => {
@@ -121,6 +169,83 @@ const clearStoredSession = async () => {
 const clearLocalAppState = () => {
   usePropertyStore.getState().resetForSignOut();
   useLocationStore.getState().clearStoredLocation();
+};
+
+const buildSession = (session: SupabaseAuthSession): Session => ({
+  accessToken: session.access_token,
+  refreshToken: session.refresh_token,
+  expiresIn: session.expires_in || 3600,
+  expiresAt: (session.expires_at || Math.floor(Date.now() / 1000) + 3600) * 1000,
+});
+
+const hydrateAuthenticatedUser = async (
+  authUser: SupabaseAuthUser,
+  authSession: SupabaseAuthSession,
+  fallbackEmail: string
+) => {
+  const email = authUser.email || fallbackEmail;
+
+  const { data: profile } = await supabaseClient
+    .from('user_profiles')
+    .select('name, avatar_url, company_name, description, phone, whatsapp, address')
+    .eq('id', authUser.id)
+    .maybeSingle();
+
+  if (!profile) {
+    await upsertOwnUserProfile(
+      authUser.id,
+      email,
+      (authUser.user_metadata?.name as string | undefined) || 'User',
+      authUser.user_metadata?.phone as string | undefined,
+      authUser.user_metadata?.whatsapp as string | undefined,
+    );
+  }
+
+  const session = buildSession(authSession);
+
+  await AsyncStorage.setItem('auth_token', session.accessToken);
+  await AsyncStorage.setItem('refresh_token', session.refreshToken);
+
+  return {
+    user: {
+      id: authUser.id,
+      email,
+      name: profile?.name || authUser.user_metadata?.name || 'User',
+      avatar: profile?.avatar_url || undefined,
+      companyName: profile?.company_name || undefined,
+      description: profile?.description || undefined,
+      phone: profile?.phone || undefined,
+      whatsapp: profile?.whatsapp || undefined,
+      address: profile?.address || undefined,
+    } satisfies User,
+    session,
+  };
+};
+
+const postAuthJson = async <T>(path: string, payload: unknown): Promise<T> => {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const contentType = response.headers.get('content-type') || '';
+
+  if (!contentType.toLowerCase().includes('application/json')) {
+    throw new Error('The app could not reach the authentication API. Received a non-JSON response instead.');
+  }
+
+  const responseBody = await response.json().catch(() => {
+    throw new Error('The app received an invalid response from the authentication API.');
+  });
+
+  if (!response.ok || responseBody.success === false) {
+    throw new Error(responseBody.message || 'Request failed');
+  }
+
+  return responseBody as T;
 };
 
 const resetAuthState = () => ({
@@ -174,54 +299,20 @@ export const useAuthStore = create<AuthState>()(
             });
             set({
               isLoading: false,
-              error: 'Please confirm your email before signing in.',
+              error: 'Please verify the email PIN before signing in.',
             });
             return false;
           }
 
-          const { data: profile } = await supabaseClient
-            .from('user_profiles')
-            .select('name, avatar_url, company_name, description, phone, whatsapp, address')
-            .eq('id', data.user.id)
-            .maybeSingle();
-
-          if (!profile) {
-            await upsertOwnUserProfile(
-              data.user.id,
-              data.user.email || email,
-              (data.user.user_metadata?.name as string | undefined) || 'User',
-              data.user.user_metadata?.phone as string | undefined,
-              data.user.user_metadata?.whatsapp as string | undefined,
-            );
-          }
-
-          const session: Session = {
-            accessToken: data.session.access_token,
-            refreshToken: data.session.refresh_token,
-            expiresIn: data.session.expires_in || 3600,
-            expiresAt: (data.session.expires_at || Math.floor(Date.now() / 1000) + 3600) * 1000,
-          };
+          const authenticatedState = await hydrateAuthenticatedUser(data.user, data.session, email);
 
           set({
-            user: {
-              id: data.user.id,
-              email: data.user.email || email,
-              name: profile?.name || data.user.user_metadata?.name || 'User',
-              avatar: profile?.avatar_url || undefined,
-              companyName: profile?.company_name || undefined,
-              description: profile?.description || undefined,
-              phone: profile?.phone || undefined,
-              whatsapp: profile?.whatsapp || undefined,
-              address: profile?.address || undefined,
-            },
-            session,
+            user: authenticatedState.user,
+            session: authenticatedState.session,
             isAuthenticated: true,
             isLoading: false,
             error: null,
           });
-
-          await AsyncStorage.setItem('auth_token', session.accessToken);
-          await AsyncStorage.setItem('refresh_token', session.refreshToken);
 
           return true;
         } catch (error) {
@@ -238,26 +329,47 @@ export const useAuthStore = create<AuthState>()(
         
         try {
           const normalizedEmail = normalizeEmail(email);
-          const { data, error: signupError } = await supabaseClient.auth.signUp({
-            email: normalizedEmail,
-            password,
-            options: {
-              emailRedirectTo: SIGNUP_CONFIRM_REDIRECT_URL,
-              data: {
+          let response: { message?: string } | null = null;
+
+          try {
+            response = await postAuthJson<{ message?: string }>(
+              '/auth/signup/request',
+              {
                 name,
+                email: normalizedEmail,
+                password,
                 phone,
                 whatsapp,
-              },
-            },
-          });
+              }
+            );
+          } catch (error) {
+            if (!isBackendSignupFallbackError(error)) {
+              throw error;
+            }
 
-          if (signupError || !data.user) {
-            set({
-              isLoading: false,
-              error: getSignupErrorMessage(signupError, 'Signup failed'),
-              signupMessage: null,
+            const { data, error: signupError } = await supabaseClient.auth.signUp({
+              email: normalizedEmail,
+              password,
+              options: {
+                data: {
+                  name,
+                  phone,
+                  whatsapp,
+                },
+              },
             });
-            return false;
+
+            if (signupError) {
+              throw signupError;
+            }
+
+            if (!data.user) {
+              throw new Error('Failed to create account');
+            }
+
+            response = {
+              message: 'Your account has been created. We sent a verification PIN to your email. Enter that PIN to confirm your account and finish signing in.',
+            };
           }
 
           set({
@@ -266,7 +378,7 @@ export const useAuthStore = create<AuthState>()(
             isAuthenticated: false,
             isLoading: false,
             error: null,
-            signupMessage: 'Your account has been created. Open the confirmation email, confirm your address, then sign in with your credentials.',
+            signupMessage: response?.message || 'Your account has been created. We sent a verification PIN to your email. Enter that PIN to confirm your account and finish signing in.',
           });
 
           return true;
@@ -280,21 +392,127 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
+      verifySignupPin: async (email: string, pinCode: string, password: string) => {
+        set({ isLoading: true, error: null });
+
+        try {
+          const normalizedEmail = normalizeEmail(email);
+          let welcomeEmailSent = true;
+          let signInData:
+            | {
+                user: SupabaseAuthUser;
+                session: SupabaseAuthSession;
+              }
+            | null = null;
+
+          if (pinCode.trim().length === 8) {
+            try {
+              await postAuthJson('/auth/signup/verify', {
+                email: normalizedEmail,
+                pinCode,
+              });
+
+              const { data, error } = await supabaseClient.auth.signInWithPassword({
+                email: normalizedEmail,
+                password,
+              });
+
+              if (error || !data.user || !data.session) {
+                throw new Error(error?.message || 'Account verified, but sign-in failed. Please sign in manually.');
+              }
+
+              signInData = {
+                user: data.user,
+                session: data.session,
+              };
+            } catch (error) {
+              if (!isRecoverableSignupVerificationError(error)) {
+                throw error;
+              }
+
+              // Some accounts are created through direct Supabase signup fallback.
+              // In that case backend PIN verification may not find the account,
+              // so continue with Supabase OTP verification below.
+            }
+          }
+
+          if (!signInData) {
+            const { data, error } = await supabaseClient.auth.verifyOtp({
+              email: normalizedEmail,
+              token: pinCode,
+              type: 'signup',
+            });
+
+            if (error || !data.user || !data.session) {
+              throw new Error(error?.message || 'Invalid or expired verification PIN');
+            }
+
+            await upsertOwnUserProfile(
+              data.user.id,
+              normalizedEmail,
+              typeof data.user.user_metadata?.name === 'string' ? data.user.user_metadata.name : undefined,
+              typeof data.user.user_metadata?.phone === 'string' ? data.user.user_metadata.phone : undefined,
+              typeof data.user.user_metadata?.whatsapp === 'string' ? data.user.user_metadata.whatsapp : undefined,
+            );
+
+            signInData = {
+              user: data.user,
+              session: data.session,
+            };
+          }
+
+          const authenticatedState = await hydrateAuthenticatedUser(signInData.user, signInData.session, normalizedEmail);
+
+          try {
+            await sendWelcomeEmailForSession(authenticatedState.session.accessToken);
+          } catch (welcomeError) {
+            welcomeEmailSent = false;
+            console.error('Welcome email delivery failed after signup verification:', welcomeError);
+          }
+
+          set({
+            user: authenticatedState.user,
+            session: authenticatedState.session,
+            isAuthenticated: true,
+            isLoading: false,
+            error: null,
+            signupMessage: welcomeEmailSent
+              ? 'User registration successful. Welcome email sent.'
+              : 'User registration successful, but the welcome email could not be sent.',
+          });
+
+          return true;
+        } catch (error) {
+          set({
+            isLoading: false,
+            error: getSignupErrorMessage(error, 'Invalid or expired verification PIN'),
+          });
+          return false;
+        }
+      },
+
       resendSignupConfirmation: async (email: string) => {
         set({ isLoading: true, error: null });
 
         try {
           const normalizedEmail = normalizeEmail(email);
-          const { error } = await supabaseClient.auth.resend({
-            type: 'signup',
-            email: normalizedEmail,
-            options: {
-              emailRedirectTo: SIGNUP_CONFIRM_REDIRECT_URL,
-            },
-          });
+          try {
+            await postAuthJson('/auth/signup/resend', {
+              email: normalizedEmail,
+            });
+          } catch (error) {
+            if (!isBackendSignupFallbackError(error)) {
+              throw error;
+            }
 
-          if (error) {
-            throw error;
+            const { error: resendError } = await supabaseClient.auth.resend({
+              type: 'signup',
+              email: normalizedEmail,
+            });
+
+            if (resendError) {
+              throw resendError;
+            }
           }
 
           set({
@@ -306,7 +524,7 @@ export const useAuthStore = create<AuthState>()(
         } catch (error) {
           set({
             isLoading: false,
-            error: getSignupErrorMessage(error, 'Failed to resend confirmation email'),
+            error: getSignupErrorMessage(error, 'Failed to resend verification email'),
           });
           return false;
         }

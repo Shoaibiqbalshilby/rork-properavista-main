@@ -274,6 +274,7 @@ Options:
 - Mailgun - https://mailgun.com
 
 Configured in [utils/password-reset.ts](utils/password-reset.ts):
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM_EMAIL` for SMTP relay
 - `RESEND_API_KEY` and `PASSWORD_RESET_EMAIL_FROM` for Resend
 - `SENDGRID_API_KEY` and `PASSWORD_RESET_EMAIL_FROM` for SendGrid
 
@@ -283,6 +284,14 @@ Add the provider variables to the backend runtime environment before testing in 
 
 ```bash
 # Email
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM_EMAIL=no-reply@yourdomain.com
+SMTP_FROM_NAME=Properavista Support
+SMTP_SECURE=false
+
 RESEND_API_KEY=
 SENDGRID_API_KEY=
 PASSWORD_RESET_EMAIL_FROM=no-reply@yourdomain.com

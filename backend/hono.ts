@@ -11,7 +11,12 @@ import {
   requestPasswordResetByEmail,
   verifyPasswordResetPin,
 } from "./auth/password-reset-service";
-import { sendSignupConfirmedEmail } from './auth/email-notification-service';
+import { sendSignupConfirmedEmail, sendWelcomeEmail } from './auth/email-notification-service';
+import {
+  requestSignupVerification,
+  resendSignupVerification,
+  verifySignupVerification,
+} from './auth/signup-verification-service';
 
 // app will be mounted at /api
 const app = new Hono();
@@ -32,25 +37,42 @@ const confirmPasswordResetSchema = z.object({
   newPassword: z.string().min(6, "Password must be at least 6 characters"),
 });
 
-const getAuthenticatedUserId = async (authorizationHeader?: string | null) => {
+const requestSignupSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters'),
+  email: z.string().email('Invalid email address'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
+  phone: z.string().optional(),
+  whatsapp: z.string().optional(),
+});
+
+const verifySignupSchema = z.object({
+  email: z.string().email('Invalid email address'),
+  pinCode: z.string().length(8, 'PIN must be 8 digits'),
+});
+
+const resendSignupSchema = z.object({
+  email: z.string().email('Invalid email address'),
+});
+
+const getAuthenticatedUser = async (authorizationHeader?: string | null) => {
   if (!authorizationHeader?.startsWith('Bearer ')) {
-    throw new Error('You must be signed in to delete your account.');
+    throw new Error('You must be signed in to continue.');
   }
 
   const accessToken = authorizationHeader.slice('Bearer '.length).trim();
 
   if (!accessToken) {
-    throw new Error('You must be signed in to delete your account.');
+    throw new Error('You must be signed in to continue.');
   }
 
   const publicSupabase = createPublicSupabaseClient();
   const { data, error } = await publicSupabase.auth.getUser(accessToken);
 
-  if (error || !data.user?.id) {
+  if (error || !data.user) {
     throw new Error('Your session is no longer valid. Please sign in again.');
   }
 
-  return data.user.id;
+  return data.user;
 };
 
 const createPublicSupabaseClient = () => {
@@ -173,6 +195,36 @@ app.post("/auth/password-reset/request", async (c) => {
   }
 });
 
+app.post('/auth/signup/request', async (c) => {
+  try {
+    const body = requestSignupSchema.parse(await c.req.json());
+    return c.json(await requestSignupVerification(body.name, body.email, body.password, body.phone, body.whatsapp));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Signup failed';
+    return c.json({ success: false, message }, 400);
+  }
+});
+
+app.post('/auth/signup/verify', async (c) => {
+  try {
+    const body = verifySignupSchema.parse(await c.req.json());
+    return c.json(await verifySignupVerification(body.email, body.pinCode));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Signup verification failed';
+    return c.json({ success: false, message }, 400);
+  }
+});
+
+app.post('/auth/signup/resend', async (c) => {
+  try {
+    const body = resendSignupSchema.parse(await c.req.json());
+    return c.json(await resendSignupVerification(body.email));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to resend signup PIN';
+    return c.json({ success: false, message }, 400);
+  }
+});
+
 app.post("/auth/password-reset/verify", async (c) => {
   try {
     const body = verifyPasswordResetSchema.parse(await c.req.json());
@@ -197,10 +249,40 @@ app.post("/auth/password-reset/confirm", async (c) => {
 
 app.delete('/auth/account', async (c) => {
   try {
-    const userId = await getAuthenticatedUserId(c.req.header('authorization'));
+    const user = await getAuthenticatedUser(c.req.header('authorization'));
+    const userId = user.id;
     return c.json(await deleteAccountByUserId(userId));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Account deletion failed';
+    return c.json({ success: false, message }, 400);
+  }
+});
+
+app.post('/auth/signup/welcome', async (c) => {
+  try {
+    const user = await getAuthenticatedUser(c.req.header('authorization'));
+
+    if (!user.email) {
+      throw new Error('Authenticated user email is missing.');
+    }
+
+    if (!user.email_confirmed_at) {
+      throw new Error('Email verification is required before sending the welcome email.');
+    }
+
+    const welcomeEmailSent = await sendWelcomeEmail(
+      user.email,
+      typeof user.user_metadata?.name === 'string' ? user.user_metadata.name : undefined,
+      'https://properavista.com/login'
+    );
+
+    if (!welcomeEmailSent) {
+      return c.json({ success: false, message: 'Welcome email could not be sent.' }, 502);
+    }
+
+    return c.json({ success: true, message: 'Welcome email sent.' });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to send welcome email';
     return c.json({ success: false, message }, 400);
   }
 });

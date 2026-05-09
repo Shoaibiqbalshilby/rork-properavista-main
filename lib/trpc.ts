@@ -7,8 +7,7 @@ import Constants from "expo-constants";
 export const trpc = createTRPCReact<AppRouter>();
 
 export const getApiBaseUrl = () => {
-  const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL;
-  const isPlaceholderRorkUrl = baseUrl === 'https://api.rork.com' || baseUrl === 'http://api.rork.com';
+  const baseUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
 
   const normalizeBaseUrl = (rawUrl: string) => {
     const normalizedBaseUrl = rawUrl.replace(/\/$/, "");
@@ -24,7 +23,7 @@ export const getApiBaseUrl = () => {
     return `${normalizedBaseUrl}/api`;
   };
 
-  if (baseUrl && !isPlaceholderRorkUrl) {
+  if (baseUrl) {
     return normalizeBaseUrl(baseUrl);
   }
 
@@ -35,12 +34,12 @@ export const getApiBaseUrl = () => {
 
   if (hostUri) {
     const host = hostUri.split(":")[0];
-    return `http://${host}:8081/api`;
+    return `http://${host}:8787/api`;
   }
 
   // Fallback so the module doesn't throw at load time on a built APK.
   // API-dependent features will show their own error messages instead of freezing on the splash.
-  return "http://localhost:8081/api";
+  return "http://localhost:8787/api";
 };
 
 const getTrpcUrl = () => {
