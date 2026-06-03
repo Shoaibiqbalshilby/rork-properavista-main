@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View, Text, Pressable, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { StyleSheet, View, Text, Pressable, ScrollView, Alert, ActivityIndicator, Modal } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
@@ -9,23 +9,29 @@ import {
   Bell, 
   HelpCircle, 
   LogOut, 
-  Trash2,
   ChevronRight,
   Home,
   Heart,
   MessageCircle,
   Shield,
-  Building2
+  Building2,
+  Share2,
+  Instagram,
+  MoreHorizontal,
+  X
 } from 'lucide-react-native';
 import { useAuthStore } from '@/hooks/useAuthStore';
 import Colors from '@/constants/colors';
 import { uploadImageToBucket } from '@/lib/storage';
 import { supabaseClient } from '@/lib/supabase';
+import { shareProfileNative, shareProfileToInstagram, shareProfileToWhatsApp } from '@/utils/profile-share';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { user, isAuthenticated, logout, deleteAccount, updateProfile, isLoading } = useAuthStore();
+  const { user, isAuthenticated, logout, updateProfile } = useAuthStore();
   const [uploadingAvatar, setUploadingAvatar] = React.useState(false);
+  const [sharingProfile, setSharingProfile] = React.useState(false);
+  const [showShareSheet, setShowShareSheet] = React.useState(false);
   
   const handleLogin = () => {
     router.push('/login' as any);
@@ -51,47 +57,6 @@ export default function ProfileScreen() {
     );
   };
 
-  const handleDeleteAccount = () => {
-    Alert.alert(
-      'Delete Account',
-      'This permanently deletes your account, profile, property listings, and related messages. This action cannot be undone.',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Delete Account',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert(
-              'Confirm Deletion',
-              'Are you sure you want to permanently delete your account now?',
-              [
-                {
-                  text: 'Keep Account',
-                  style: 'cancel',
-                },
-                {
-                  text: 'Permanently Delete',
-                  style: 'destructive',
-                  onPress: async () => {
-                    const success = await deleteAccount();
-
-                    if (success) {
-                      Alert.alert('Account Deleted', 'Your account has been deleted successfully.');
-                      router.replace('/' as any);
-                    }
-                  },
-                },
-              ]
-            );
-          },
-        },
-      ]
-    );
-  };
-  
   const handleAvatarUpload = async () => {
     if (!user) return;
 
@@ -128,6 +93,29 @@ export default function ProfileScreen() {
     }
   };
 
+  const runShareAction = async (shareAction: () => Promise<void>) => {
+    if (!user || sharingProfile) return;
+
+    setShowShareSheet(false);
+    setSharingProfile(true);
+    try {
+      await shareAction();
+    } catch (error) {
+      Alert.alert(
+        'Share Failed',
+        error instanceof Error ? error.message : 'Unable to share this profile right now.'
+      );
+    } finally {
+      setSharingProfile(false);
+    }
+  };
+
+  const handleShareProfile = () => {
+    if (!user) return;
+
+    setShowShareSheet(true);
+  };
+
   const accountMenuItems = [
     { icon: <Home size={22} color={Colors.light.text} />, title: 'My Properties', route: '/my-properties' },
     { icon: <Heart size={22} color={Colors.light.text} />, title: 'Saved Properties', route: '/favorites' },
@@ -140,11 +128,11 @@ export default function ProfileScreen() {
     { icon: <Bell size={22} color={Colors.light.text} />, title: 'Notifications', route: '/notifications' },
     { icon: <Shield size={22} color={Colors.light.text} />, title: 'Privacy & Security', route: '/privacy' },
     { icon: <HelpCircle size={22} color={Colors.light.text} />, title: 'Help & Support', route: '/help' },
-    { icon: <Trash2 size={22} color={Colors.light.error} />, title: 'Delete Account', onPress: handleDeleteAccount, isDestructive: true, requiresAuth: true },
     { icon: <LogOut size={22} color={Colors.light.error} />, title: 'Log Out', onPress: handleLogout, isDestructive: true },
   ];
 
   return (
+    <>
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <Pressable
@@ -177,6 +165,21 @@ export default function ProfileScreen() {
             {user.phone ? <Text style={styles.metaText}>Phone: {user.phone}</Text> : null}
             {user.whatsapp ? <Text style={styles.metaText}>WhatsApp: {user.whatsapp}</Text> : null}
             <Text style={styles.avatarHint}>Tap profile picture to change</Text>
+
+            <Pressable
+              style={[styles.shareButton, sharingProfile && styles.shareButtonDisabled]}
+              onPress={handleShareProfile}
+              disabled={sharingProfile}
+            >
+              {sharingProfile ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <>
+                  <Share2 size={18} color="white" />
+                  <Text style={styles.shareButtonText}>Share Profile</Text>
+                </>
+              )}
+            </Pressable>
 
             <View style={styles.statsContainer}>
               <View style={styles.statItem}>
@@ -249,14 +252,11 @@ export default function ProfileScreen() {
           {settingsMenuItems.map((item, index) => {
             // Skip logout if not authenticated
             if (item.title === 'Log Out' && !isAuthenticated) return null;
-            if (item.requiresAuth && !isAuthenticated) return null;
-            
             return (
               <Pressable 
                 key={index} 
                 style={styles.menuItem}
                 onPress={item.onPress || (() => router.push(item.route as any))}
-                disabled={item.title === 'Delete Account' && isLoading}
               >
                 <View style={styles.menuItemLeft}>
                   {item.icon}
@@ -269,11 +269,7 @@ export default function ProfileScreen() {
                     {item.title}
                   </Text>
                 </View>
-                {item.title === 'Delete Account' && isLoading ? (
-                  <ActivityIndicator color={Colors.light.error} />
-                ) : (
-                  <ChevronRight size={20} color={Colors.light.subtext} />
-                )}
+                <ChevronRight size={20} color={Colors.light.subtext} />
               </Pressable>
             );
           })}
@@ -282,6 +278,68 @@ export default function ProfileScreen() {
       
       <Text style={styles.versionText}>Version 1.0.0</Text>
     </ScrollView>
+
+    <Modal
+      visible={showShareSheet}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowShareSheet(false)}
+    >
+      <View style={styles.shareSheetOverlay}>
+        <Pressable style={styles.shareSheetBackdrop} onPress={() => setShowShareSheet(false)} />
+        <View style={styles.shareSheet}>
+          <View style={styles.shareSheetHandle} />
+          <View style={styles.shareSheetHeader}>
+            <View>
+              <Text style={styles.shareSheetTitle}>Share Profile</Text>
+              <Text style={styles.shareSheetSubtitle}>Send your Properavista profile</Text>
+            </View>
+            <Pressable
+              style={styles.shareSheetCloseButton}
+              onPress={() => setShowShareSheet(false)}
+            >
+              <X size={20} color={Colors.light.subtext} />
+            </Pressable>
+          </View>
+
+          <View style={styles.shareOptions}>
+            <Pressable
+              style={styles.shareOption}
+              onPress={() => user && void runShareAction(() => shareProfileToWhatsApp(user))}
+              disabled={sharingProfile}
+            >
+              <View style={[styles.shareOptionIcon, styles.whatsappOptionIcon]}>
+                <MessageCircle size={24} color="white" />
+              </View>
+              <Text style={styles.shareOptionTitle}>WhatsApp</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.shareOption}
+              onPress={() => user && void runShareAction(() => shareProfileToInstagram(user))}
+              disabled={sharingProfile}
+            >
+              <View style={[styles.shareOptionIcon, styles.instagramOptionIcon]}>
+                <Instagram size={24} color="white" />
+              </View>
+              <Text style={styles.shareOptionTitle}>Instagram</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.shareOption}
+              onPress={() => user && void runShareAction(() => shareProfileNative(user))}
+              disabled={sharingProfile}
+            >
+              <View style={[styles.shareOptionIcon, styles.moreOptionIcon]}>
+                <MoreHorizontal size={24} color="white" />
+              </View>
+              <Text style={styles.shareOptionTitle}>More</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+    </>
   );
 }
 
@@ -348,6 +406,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.light.subtext,
     marginTop: 6,
+  },
+  shareButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minWidth: 150,
+    minHeight: 44,
+    marginTop: 14,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+    backgroundColor: Colors.light.primary,
+  },
+  shareButtonDisabled: {
+    opacity: 0.75,
+  },
+  shareButtonText: {
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '600',
   },
   statsContainer: {
     flexDirection: 'row',
@@ -447,5 +525,98 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     fontSize: 12,
     color: Colors.light.subtext,
+  },
+  shareSheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  shareSheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(31, 42, 55, 0.42)',
+  },
+  shareSheet: {
+    backgroundColor: Colors.light.background,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.14,
+    shadowRadius: 20,
+    elevation: 18,
+  },
+  shareSheetHandle: {
+    width: 42,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.light.border,
+    alignSelf: 'center',
+    marginBottom: 18,
+  },
+  shareSheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  shareSheetTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: Colors.light.text,
+  },
+  shareSheetSubtitle: {
+    fontSize: 13,
+    color: Colors.light.subtext,
+    marginTop: 4,
+  },
+  shareSheetCloseButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.light.card,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  shareOptions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  shareOption: {
+    flex: 1,
+    minHeight: 104,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: Colors.light.card,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    paddingHorizontal: 8,
+  },
+  shareOptionIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  whatsappOptionIcon: {
+    backgroundColor: Colors.light.success,
+  },
+  instagramOptionIcon: {
+    backgroundColor: Colors.light.secondary,
+  },
+  moreOptionIcon: {
+    backgroundColor: Colors.light.primary,
+  },
+  shareOptionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.light.text,
+    textAlign: 'center',
   },
 });

@@ -1,10 +1,53 @@
 import React from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import Colors from '@/constants/colors';
+import { useAuthStore } from '@/hooks/useAuthStore';
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const { isAuthenticated, isLoading, deleteAccount } = useAuthStore();
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'This permanently deletes your account, profile, property listings, and related messages. This action cannot be undone.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Confirm Deletion',
+              'Are you sure you want to permanently delete your account now?',
+              [
+                {
+                  text: 'Keep Account',
+                  style: 'cancel',
+                },
+                {
+                  text: 'Permanently Delete',
+                  style: 'destructive',
+                  onPress: async () => {
+                    const success = await deleteAccount();
+
+                    if (success) {
+                      Alert.alert('Account Deleted', 'Your account has been deleted successfully.');
+                      router.replace('/' as any);
+                    }
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -52,6 +95,20 @@ export default function SettingsScreen() {
           <Pressable style={styles.rowButton} onPress={() => router.push('/my-properties' as any)}>
             <Text style={styles.rowButtonText}>Manage my properties</Text>
           </Pressable>
+          {isAuthenticated ? (
+            <>
+              <View style={styles.divider} />
+              <Pressable style={styles.rowButton} onPress={handleDeleteAccount} disabled={isLoading}>
+                <View style={styles.destructiveHeader}>
+                  <Text style={styles.destructiveTitle}>Delete Account</Text>
+                  {isLoading ? <ActivityIndicator color={Colors.light.error} /> : null}
+                </View>
+                <Text style={styles.rowDescription}>
+                  Permanently delete your account, profile, listings, and related messages.
+                </Text>
+              </Pressable>
+            </>
+          ) : null}
         </View>
       </View>
     </ScrollView>
@@ -120,10 +177,27 @@ const styles = StyleSheet.create({
   rowButton: {
     paddingHorizontal: 16,
     paddingVertical: 15,
+    gap: 4,
   },
   rowButtonText: {
     fontSize: 15,
     color: Colors.light.primary,
+    fontWeight: '600',
+  },
+  rowDescription: {
+    fontSize: 13,
+    color: Colors.light.subtext,
+    lineHeight: 19,
+  },
+  destructiveHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  destructiveTitle: {
+    fontSize: 15,
+    color: Colors.light.error,
     fontWeight: '600',
   },
   divider: {

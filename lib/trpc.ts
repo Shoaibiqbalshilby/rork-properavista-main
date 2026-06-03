@@ -10,7 +10,21 @@ export const getApiBaseUrl = () => {
   const baseUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
 
   const normalizeBaseUrl = (rawUrl: string) => {
-    const normalizedBaseUrl = rawUrl.replace(/\/$/, "");
+    let normalizedBaseUrl = rawUrl.replace(/\/$/, "");
+
+    if (normalizedBaseUrl.startsWith('http://')) {
+      const host = normalizedBaseUrl.replace(/^http:\/\//, '').split('/')[0]?.split(':')[0] || '';
+      const isLocalHost =
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host.startsWith('10.') ||
+        host.startsWith('192.168.') ||
+        /^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
+
+      if (!isLocalHost) {
+        normalizedBaseUrl = normalizedBaseUrl.replace(/^http:\/\//, 'https://');
+      }
+    }
 
     if (normalizedBaseUrl.endsWith("/api/trpc")) {
       return normalizedBaseUrl.replace(/\/trpc$/, "");

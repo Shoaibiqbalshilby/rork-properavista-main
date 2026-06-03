@@ -110,7 +110,12 @@ const isBackendSignupFallbackError = (error: unknown) => {
   return (
     message.includes('invalid api key') ||
     message.includes('service_role_key') ||
-    message.includes('supabaseadmin requires')
+    message.includes('supabaseadmin requires') ||
+    message.includes('network request failed') ||
+    message.includes('failed to fetch') ||
+    message.includes('fetch failed') ||
+    message.includes('cannot reach backend') ||
+    message.includes('could not reach the authentication api')
   );
 };
 

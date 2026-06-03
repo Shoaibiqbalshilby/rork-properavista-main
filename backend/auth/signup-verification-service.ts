@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js';
 import { supabaseAdmin } from '@/lib/supabase';
 import { generatePinCode, normalizeEmail, validatePinFormat } from '@/utils/password-reset';
 import { sendSignupPinEmail } from './email-notification-service';
@@ -18,6 +19,52 @@ type SignupProfileLookup = {
 };
 
 const SIGNUP_PIN_TTL_MINUTES = 15;
+const SIGNUP_VERIFICATION_STORAGE_PROBE_USER_ID = '00000000-0000-0000-0000-000000000000';
+
+let customSignupVerificationStorageAvailable: boolean | null = null;
+
+const createPublicSupabaseClient = () => {
+  const url = process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anonKey) {
+    throw new Error('Supabase public auth configuration is missing');
+  }
+
+  return createClient(url, anonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+};
+
+const isMissingSignupVerificationStorageError = (error: { message?: string } | null | undefined) =>
+  !!error?.message && error.message.includes("Could not find the table 'public.signup_verification_tokens'");
+
+const canUseCustomSignupVerificationStorage = async () => {
+  if (customSignupVerificationStorageAvailable !== null) {
+    return customSignupVerificationStorageAvailable;
+  }
+
+  const { error } = await supabaseAdmin
+    .from('signup_verification_tokens')
+    .update({ is_used: true })
+    .eq('user_id', SIGNUP_VERIFICATION_STORAGE_PROBE_USER_ID)
+    .eq('is_used', false);
+
+  if (isMissingSignupVerificationStorageError(error)) {
+    customSignupVerificationStorageAvailable = false;
+    return false;
+  }
+
+  if (error) {
+    throw new Error(`Failed to access signup verification storage: ${error.message}`);
+  }
+
+  customSignupVerificationStorageAvailable = true;
+  return true;
+};
 
 const getAuthUserByEmail = async (rawEmail: string): Promise<SignupVerificationUser | null> => {
   const email = normalizeEmail(rawEmail);
@@ -156,6 +203,63 @@ const upsertUserProfile = async (
   }
 };
 
+const requestNativeSignupVerification = async (
+  name: string,
+  rawEmail: string,
+  password: string,
+  phone?: string,
+  whatsapp?: string,
+) => {
+  const email = normalizeEmail(rawEmail);
+  const publicSupabase = createPublicSupabaseClient();
+
+  const { data, error } = await publicSupabase.auth.signUp({
+    email,
+    password,
+    options: {
+      data: {
+        name,
+        phone,
+        whatsapp,
+      },
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message || 'Failed to create account');
+  }
+
+  if (!data.user) {
+    throw new Error('Failed to create account');
+  }
+
+  await upsertUserProfile(data.user.id, email, name, phone, whatsapp);
+
+  return {
+    success: true,
+    message: 'Your account has been created. We sent a verification PIN to your email. Enter that PIN to confirm your account and finish signing in.',
+  };
+};
+
+const resendNativeSignupVerification = async (rawEmail: string) => {
+  const email = normalizeEmail(rawEmail);
+  const publicSupabase = createPublicSupabaseClient();
+
+  const { error } = await publicSupabase.auth.resend({
+    type: 'signup',
+    email,
+  });
+
+  if (error) {
+    throw new Error(error.message || 'Failed to resend verification PIN email. Please try again.');
+  }
+
+  return {
+    success: true,
+    message: 'A new verification PIN has been sent to your email.',
+  };
+};
+
 export const requestSignupVerification = async (
   name: string,
   rawEmail: string,
@@ -163,6 +267,10 @@ export const requestSignupVerification = async (
   phone?: string,
   whatsapp?: string,
 ) => {
+  if (!(await canUseCustomSignupVerificationStorage())) {
+    return requestNativeSignupVerification(name, rawEmail, password, phone, whatsapp);
+  }
+
   const email = normalizeEmail(rawEmail);
   const metadata = {
     name,
@@ -221,6 +329,10 @@ export const requestSignupVerification = async (
 };
 
 export const resendSignupVerification = async (rawEmail: string) => {
+  if (!(await canUseCustomSignupVerificationStorage())) {
+    return resendNativeSignupVerification(rawEmail);
+  }
+
   const email = normalizeEmail(rawEmail);
   const user = await getAuthUserByEmail(email);
 
@@ -250,6 +362,10 @@ export const resendSignupVerification = async (rawEmail: string) => {
 };
 
 export const verifySignupVerification = async (rawEmail: string, pinCode: string) => {
+  if (!(await canUseCustomSignupVerificationStorage())) {
+    throw new Error('Signup verification failed');
+  }
+
   const email = normalizeEmail(rawEmail);
 
   if (!validatePinFormat(pinCode)) {

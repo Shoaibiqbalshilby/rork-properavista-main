@@ -104,6 +104,7 @@ function RootLayoutNav() {
       <Stack.Screen name="help" options={{ title: "Help & Support" }} />
       <Stack.Screen name="messages" options={{ title: "Messages" }} />
       <Stack.Screen name="my-properties" options={{ title: "My Properties" }} />
+      <Stack.Screen name="profile/[id]" options={{ title: "Profile" }} />
       <Stack.Screen name="property/[id]" options={{ title: "Property" }} />
     </Stack>
   );
